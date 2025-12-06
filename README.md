@@ -7,7 +7,7 @@ This is a study version aimed at exploring patterns and performance optimization
 ## Installation
 This library is intended to be used as a NuGet package. To install it, use the .NET CLI:
 ```bash
-dotnet add package SimpleMediator
+dotnet add package s4ndr0ne.SimpleMediator
 ```
 
 ## Getting Started
