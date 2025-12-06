@@ -1,0 +1,46 @@
+# This workflow creates a GitHub release and attaches the nuget package.
+name: Create GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  PROJECT_PATH: src/SimpleMediator/SimpleMediator.csproj
+  TEST_PROJECT_PATH: src/SimpleMediator.Test/SimpleMediator.Test.csproj
+  
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+      
+      - name: Test
+        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack ${{ env.PROJECT_PATH }} --configuration Release --no-build -o ./artifacts      
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./artifacts/*.nupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
