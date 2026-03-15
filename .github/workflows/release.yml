@@ -5,6 +5,8 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+  
 
 env:
   PROJECT_PATH: src/SimpleMediator/SimpleMediator.csproj
@@ -42,5 +44,13 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: ./artifacts/*.nupkg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Release Symbols
+        id: create_release_symbols
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ./artifacts/*.snupkg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
