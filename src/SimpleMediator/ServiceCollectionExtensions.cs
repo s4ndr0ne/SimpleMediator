@@ -27,7 +27,8 @@ public static class ServiceCollectionExtensions
                     if (@interface.IsGenericType)
                     {
                         var genericTypeDefinition = @interface.GetGenericTypeDefinition();
-                        if (genericTypeDefinition == typeof(IRequestHandler<,>) || genericTypeDefinition == typeof(INotificationHandler<>))
+                        if (genericTypeDefinition == typeof(IRequestHandler<,>) || genericTypeDefinition == typeof(INotificationHandler<>) ||
+                            genericTypeDefinition == typeof(IPreRequestHandler<,>) || genericTypeDefinition == typeof(IPostRequestHandler<,>))
                         {
                             services.Add(new ServiceDescriptor(@interface, type, options.DefaultLifetime));
                         }

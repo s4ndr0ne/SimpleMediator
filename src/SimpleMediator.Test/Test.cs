@@ -74,6 +74,34 @@ public class UnitTest1
         }
     }
 
+    [Fact]
+    public async Task Send_InvokesPreAndPostHandlers_AroundRequestHandler()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+
+        services.AddTransient<IRequestHandler<PrePostRequest, string>, PrePostRequestHandler>();
+        services.AddTransient<IPreRequestHandler<PrePostRequest, string>, SamplePreHandler>();
+        services.AddTransient<IPostRequestHandler<PrePostRequest, string>, SamplePostHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        var request = new PrePostRequest("abc");
+
+        // Act
+        var response = await mediator.Send<string>(request);
+
+        // Assert
+        Assert.Equal("Handled: abc", response);
+        Assert.Equal(3, probe.Count);
+        Assert.Equal("Pre:abc", probe.Events[0]);
+        Assert.Equal("Handler:abc", probe.Events[1]);
+        Assert.Equal("Post:abc:Handled: abc", probe.Events[2]);
+    }
+
     // Request expecting a string response
     public record PingRequest(string Message) : IRequest<string>;
 
@@ -95,6 +123,45 @@ public class UnitTest1
         public Task Handle(TestNotification notification, CancellationToken cancellationToken)
         {
             _probe.Record($"First:{notification.Name}");
+            return Task.CompletedTask;
+        }
+    }
+
+    // Pre/Post request test artifacts
+    public record PrePostRequest(string Message) : IRequest<string>;
+
+    public class PrePostRequestHandler : IRequestHandler<PrePostRequest, string>
+    {
+        private readonly CallProbe _probe;
+        public PrePostRequestHandler(CallProbe probe) => _probe = probe;
+
+        public Task<string> Handle(PrePostRequest request, CancellationToken cancellationToken)
+        {
+            _probe.Record($"Handler:{request.Message}");
+            return Task.FromResult($"Handled: {request.Message}");
+        }
+    }
+
+    public class SamplePreHandler : IPreRequestHandler<PrePostRequest, string>
+    {
+        private readonly CallProbe _probe;
+        public SamplePreHandler(CallProbe probe) => _probe = probe;
+
+        public Task Handle(PrePostRequest request, CancellationToken cancellationToken)
+        {
+            _probe.Record($"Pre:{request.Message}");
+            return Task.CompletedTask;
+        }
+    }
+
+    public class SamplePostHandler : IPostRequestHandler<PrePostRequest, string>
+    {
+        private readonly CallProbe _probe;
+        public SamplePostHandler(CallProbe probe) => _probe = probe;
+
+        public Task Handle(PrePostRequest request, string response, CancellationToken cancellationToken)
+        {
+            _probe.Record($"Post:{request.Message}:{response}");
             return Task.CompletedTask;
         }
     }

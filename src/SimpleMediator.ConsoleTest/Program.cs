@@ -30,6 +30,10 @@ await mediator.Send(new PrintRequest { Text = "This is a void request" });
 Console.WriteLine("\n--- Testing Notification ---");
 await mediator.Publish(new PingNotification { Message = "Hello Notification" });
 
+Console.WriteLine("\n--- Testing Pre/Post Handlers ---");
+var prePostResponse = await mediator.Send(new PrePostRequest { Message = "FromConsole" });
+Console.WriteLine($"PrePost Response: {prePostResponse}");
+
 
 
 Console.WriteLine("\nDone!");

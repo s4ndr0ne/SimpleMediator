@@ -19,10 +19,27 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
             throw new InvalidOperationException($"No handler registered for {typeof(TRequest).Name}");
         }
 
+        var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
+        var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
         var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>()
             .Reverse();
 
-        RequestHandlerDelegate<TResponse> next = () => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> next = async () =>
+        {
+            foreach (var pre in preHandlers)
+            {
+                await pre.Handle((TRequest)request, cancellationToken);
+            }
+
+            var response = await handler.Handle((TRequest)request, cancellationToken);
+
+            foreach (var post in postHandlers)
+            {
+                await post.Handle((TRequest)request, response, cancellationToken);
+            }
+
+            return response;
+        };
 
         foreach (var behavior in behaviors)
         {

@@ -219,6 +219,36 @@ services.AddSimpleMediator(options =>
 
 Now, every time you send a request that returns a value, the `LoggingBehavior` will be executed.
 
+### Pre / Post Request Handlers
+SimpleMediator also supports lightweight pre- and post-request handlers that run around the main request handler. They are useful for tasks such as metrics, lightweight auditing, or context enrichment that don't require wrapping the whole pipeline.
+
+- `IPreRequestHandler<TRequest, TResponse>`: executed before the main `IRequestHandler` with signature `Task Handle(TRequest request, CancellationToken)`.
+- `IPostRequestHandler<TRequest, TResponse>`: executed after the main `IRequestHandler` with signature `Task Handle(TRequest request, TResponse response, CancellationToken)`.
+
+These are discovered automatically by `AddSimpleMediator` when you register assemblies. They execute inside the innermost delegate (i.e., after pipeline behaviors have been applied and before/after the actual handler is invoked).
+
+Example:
+
+```csharp
+public class AuditPreHandler : IPreRequestHandler<MyRequest, MyResponse>
+{
+    public Task Handle(MyRequest request, CancellationToken cancellationToken)
+    {
+        // record request metadata
+        return Task.CompletedTask;
+    }
+}
+
+public class AuditPostHandler : IPostRequestHandler<MyRequest, MyResponse>
+{
+    public Task Handle(MyRequest request, MyResponse response, CancellationToken cancellationToken)
+    {
+        // record response/result metadata
+        return Task.CompletedTask;
+    }
+}
+```
+
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
