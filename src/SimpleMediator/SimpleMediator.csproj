@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
 
     <PackageId>s4ndr0ne.SimpleMediator</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <Authors>s4ndr0ne</Authors>
     <Description>A simple mediator implementation for .NET</Description>
     <RepositoryUrl>https://github.com/s4ndr0ne/SimpleMediator</RepositoryUrl> 

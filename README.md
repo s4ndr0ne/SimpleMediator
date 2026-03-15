@@ -31,7 +31,7 @@ services.AddSimpleMediator(options =>
     // Optionally add pipeline behaviors
     // options.AddBehavior(typeof(YourPipelineBehavior<,>));
 
-    // Optionally change the default lifetime (default is Transient)
+    // Optionally change the default lifetime (default is Scoped)
     options.DefaultLifetime = ServiceLifetime.Scoped;
 });
 
