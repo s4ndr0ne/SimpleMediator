@@ -165,4 +165,73 @@ public class UnitTest1
             return Task.CompletedTask;
         }
     }
+
+    [Fact]
+    public async Task Send_PropagatesCancellationToken_ToHandler()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<CancellableRequest, string>, CancellableRequestHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        var cts = new CancellationTokenSource();
+        cts.Cancel(); // cancel immediately
+
+        // Act & Assert
+        await Assert.ThrowsAsync<TaskCanceledException>(async () =>
+        {
+            await mediator.Send<string>(new CancellableRequest(), cts.Token);
+        });
+    }
+
+    public record CancellableRequest() : IRequest<string>;
+
+    public class CancellableRequestHandler : IRequestHandler<CancellableRequest, string>
+    {
+        public async Task<string> Handle(CancellableRequest request, CancellationToken cancellationToken)
+        {
+            // honor cancellation
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+            return "done";
+        }
+    }
+
+    [Fact]
+    public async Task Send_ResolvesScopedService_PerInvocation()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddScoped<ScopedDep>();
+        services.AddTransient<IRequestHandler<ScopedRequest, Guid>, ScopedRequestHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        var id1 = await mediator.Send<Guid>(new ScopedRequest());
+        var id2 = await mediator.Send<Guid>(new ScopedRequest());
+
+        // Assert - each Send creates its own scope so ScopedDep should differ
+        Assert.NotEqual(id1, id2);
+    }
+
+    public record ScopedRequest() : IRequest<Guid>;
+
+    public class ScopedDep
+    {
+        public Guid Id { get; } = Guid.NewGuid();
+    }
+
+    public class ScopedRequestHandler : IRequestHandler<ScopedRequest, Guid>
+    {
+        private readonly ScopedDep _dep;
+        public ScopedRequestHandler(ScopedDep dep) => _dep = dep;
+
+        public Task<Guid> Handle(ScopedRequest request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_dep.Id);
+        }
+    }
+
 }

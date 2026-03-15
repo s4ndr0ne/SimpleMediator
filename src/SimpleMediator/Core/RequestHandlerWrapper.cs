@@ -24,18 +24,18 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
         var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>()
             .Reverse();
 
-        RequestHandlerDelegate<TResponse> next = async () =>
+        RequestHandlerDelegate<TResponse> next = async (CancellationToken ct) =>
         {
             foreach (var pre in preHandlers)
             {
-                await pre.Handle((TRequest)request, cancellationToken);
+                await pre.Handle((TRequest)request, ct);
             }
 
-            var response = await handler.Handle((TRequest)request, cancellationToken);
+            var response = await handler.Handle((TRequest)request, ct);
 
             foreach (var post in postHandlers)
             {
-                await post.Handle((TRequest)request, response, cancellationToken);
+                await post.Handle((TRequest)request, response, ct);
             }
 
             return response;
@@ -44,9 +44,9 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
         foreach (var behavior in behaviors)
         {
             var currentNext = next;
-            next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            next = ct => behavior.Handle((TRequest)request, currentNext, ct);
         }
 
-        return next();
+        return next(cancellationToken);
     }
 }

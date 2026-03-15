@@ -6,4 +6,4 @@ public interface IRequestHandler<in TRequest, TResponse>
     Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken);
 }
 
-public delegate Task<TResponse> RequestHandlerDelegate<TResponse>();
+public delegate Task<TResponse> RequestHandlerDelegate<TResponse>(CancellationToken cancellationToken);
