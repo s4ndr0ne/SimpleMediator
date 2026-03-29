@@ -37,9 +37,9 @@ public static class ServiceCollectionExtensions
             }
         }
 
-        foreach (var behavior in options.Behaviors)
+        foreach (var behavior in options.Behaviors.OrderBy(b => b.Order))
         {
-            services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behavior, options.DefaultLifetime));
+            services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behavior.BehaviorType, options.DefaultLifetime));
         }
 
         return services;

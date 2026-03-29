@@ -22,7 +22,7 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
         var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
         var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
         var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>()
-            .Reverse();
+            .OrderBy(b => b.Order);
 
         RequestHandlerDelegate<TResponse> next = async (CancellationToken ct) =>
         {
