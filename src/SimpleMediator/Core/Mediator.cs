@@ -7,12 +7,12 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private static readonly ConcurrentDictionary<Type, object> _requestHandlers = new();
-    private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> _notificationHandlers = new();
+    private readonly ConcurrentDictionary<Type, object> _requestHandlers = new();
+    private readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> _notificationHandlers = new();
 
     public Mediator(IServiceProvider serviceProvider)
     {
-        _serviceProvider = serviceProvider;
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     }
 
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)

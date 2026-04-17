@@ -10,43 +10,54 @@ internal abstract class RequestHandlerWrapper<TResponse>
 
 internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrapper<TResponse> where TRequest : IRequest<TResponse>
 {
-    public override Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    private readonly Func<IServiceProvider, IRequestHandler<TRequest, TResponse>> _handlerFactory;
+    private readonly Func<IServiceProvider, IEnumerable<IPreRequestHandler<TRequest, TResponse>>> _preHandlersFactory;
+    private readonly Func<IServiceProvider, IEnumerable<IPostRequestHandler<TRequest, TResponse>>> _postHandlersFactory;
+    private readonly Func<IServiceProvider, IReadOnlyList<IPipelineBehavior<TRequest, TResponse>>> _behaviorsFactory;
+
+    public RequestHandlerWrapperImpl()
     {
-        var handler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>();
+        _handlerFactory = sp => sp.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
+        _preHandlersFactory = sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>();
+        _postHandlersFactory = sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>();
+        _behaviorsFactory = sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>()
+            .OrderBy(b => b.Order)
+            .ToList();
+    }
 
-        if (handler == null)
-        {
-            throw new InvalidOperationException($"No handler registered for {typeof(TRequest).Name}");
-        }
+    public override async Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var handler = _handlerFactory(serviceProvider);
+        var preHandlers = _preHandlersFactory(serviceProvider);
+        var postHandlers = _postHandlersFactory(serviceProvider);
+        var behaviors = _behaviorsFactory(serviceProvider);
 
-        var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
-        var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
-        var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>()
-            .OrderBy(b => b.Order);
+        var typedRequest = (TRequest)request;
 
-        RequestHandlerDelegate<TResponse> next = async (CancellationToken ct) =>
+        RequestHandlerDelegate<TResponse> next = async ct =>
         {
             foreach (var pre in preHandlers)
             {
-                await pre.Handle((TRequest)request, ct);
+                await pre.Handle(typedRequest, ct);
             }
 
-            var response = await handler.Handle((TRequest)request, ct);
+            var response = await handler.Handle(typedRequest, ct);
 
             foreach (var post in postHandlers)
             {
-                await post.Handle((TRequest)request, response, ct);
+                await post.Handle(typedRequest, response, ct);
             }
 
             return response;
         };
 
-        foreach (var behavior in behaviors)
+        for (int i = behaviors.Count - 1; i >= 0; i--)
         {
             var currentNext = next;
-            next = ct => behavior.Handle((TRequest)request, currentNext, ct);
+            var behavior = behaviors[i];
+            next = ct => behavior.Handle(typedRequest, currentNext, ct);
         }
 
-        return next(cancellationToken);
+        return await next(cancellationToken);
     }
 }
