@@ -43,8 +43,7 @@ public class Mediator : IMediator
         var handler = _notificationHandlers.GetOrAdd(notificationType,
             t => (NotificationHandlerWrapper)Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t))!);
 
-        using var scope = _serviceProvider.CreateScope();
-        await handler.Handle(notification, scope.ServiceProvider, cancellationToken);
+        await handler.Handle(notification, _serviceProvider, cancellationToken);
     }  
     
 }
