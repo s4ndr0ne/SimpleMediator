@@ -12,19 +12,18 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 {
     public override Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var handler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>();
-
-        if (handler == null)
-        {
-            throw new InvalidOperationException($"No handler registered for {typeof(TRequest).Name}");
-        }
+        var handler = serviceProvider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
 
         var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
         var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
-        var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>()
-            .Reverse();
+        var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
-        RequestHandlerDelegate<TResponse> next = async (CancellationToken ct) =>
+        // The delegate chain is built on each request, but we avoid the LINQ Overhead where possible.
+        // To truly cache the delegate chain, we would need to handle the lifetime of resolved services carefully.
+        // For now, we optimize by avoiding repeated OrderBy/Reverse if possible, 
+        // though IPipelineBehavior depends on IOrderedPipelineBehavior.
+
+        RequestHandlerDelegate<TResponse> handlerDelegate = async (ct) =>
         {
             foreach (var pre in preHandlers)
             {
@@ -41,12 +40,11 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
             return response;
         };
 
-        foreach (var behavior in behaviors)
-        {
-            var currentNext = next;
-            next = ct => behavior.Handle((TRequest)request, currentNext, ct);
-        }
+        // Build the behavior chain
+        var aggregate = behaviors
+            .OrderByDescending(b => b.Order)
+            .Aggregate(handlerDelegate, (next, behavior) => ct => behavior.Handle((TRequest)request, next, ct));
 
-        return next(cancellationToken);
+        return aggregate(cancellationToken);
     }
 }

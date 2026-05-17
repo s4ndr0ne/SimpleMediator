@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
 
@@ -7,12 +8,12 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private static readonly ConcurrentDictionary<Type, object> _requestHandlers = new();
-    private static readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> _notificationHandlers = new();
+    private static readonly ConcurrentDictionary<Type, Func<object>> _requestHandlerFactories = new();
+    private static readonly ConcurrentDictionary<Type, Func<object>> _notificationHandlerFactories = new();
 
     public Mediator(IServiceProvider serviceProvider)
     {
-        _serviceProvider = serviceProvider;
+        _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     }
 
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
@@ -26,12 +27,15 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
-            t => Activator.CreateInstance(typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse)))!);
+        var factory = _requestHandlerFactories.GetOrAdd(requestType, t =>
+        {
+            var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse));
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+        });
 
-        // create a scope for resolving handlers so scoped services work correctly
-        using var scope = _serviceProvider.CreateScope();
-        return await handler.Handle(request, scope.ServiceProvider, cancellationToken);
+        var handler = (RequestHandlerWrapper<TResponse>)factory();
+
+        return await handler.Handle(request, _serviceProvider, cancellationToken);
     }
 
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
@@ -40,11 +44,14 @@ public class Mediator : IMediator
 
         var notificationType = notification.GetType();
 
-        var handler = _notificationHandlers.GetOrAdd(notificationType,
-            t => (NotificationHandlerWrapper)Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t))!);
+        var factory = _notificationHandlerFactories.GetOrAdd(notificationType, t =>
+        {
+            var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+        });
 
-        using var scope = _serviceProvider.CreateScope();
-        await handler.Handle(notification, scope.ServiceProvider, cancellationToken);
-    }  
-    
+        var handler = (NotificationHandlerWrapper)factory();
+
+        await handler.Handle(notification, _serviceProvider, cancellationToken);
+    }
 }

@@ -16,10 +16,20 @@ public static class ServiceCollectionExtensions
 
         foreach (var assembly in options.Assemblies)
         {
-            var types = assembly.GetTypes()
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(t => t != null).ToArray()!;
+            }
+
+            var filteredTypes = types
                 .Where(t => !t.IsAbstract && !t.IsInterface);
 
-            foreach (var type in types)
+            foreach (var type in filteredTypes)
             {
                 var interfaces = type.GetInterfaces();
                 foreach (var @interface in interfaces)
@@ -37,9 +47,9 @@ public static class ServiceCollectionExtensions
             }
         }
 
-        foreach (var behavior in options.Behaviors)
+        foreach (var behavior in options.Behaviors.OrderBy(b => b.Order))
         {
-            services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behavior, options.DefaultLifetime));
+            services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behavior.BehaviorType, options.DefaultLifetime));
         }
 
         return services;
