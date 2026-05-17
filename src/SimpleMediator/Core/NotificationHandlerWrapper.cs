@@ -10,10 +10,9 @@ internal abstract class NotificationHandlerWrapper
 internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandlerWrapper
     where TNotification : INotification
 {
-    public override Task Handle(INotification notification, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    public override async Task Handle(INotification notification, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        using var discoveryScope = serviceProvider.CreateScope();
-        var handlers = discoveryScope.ServiceProvider.GetServices<INotificationHandler<TNotification>>().ToList();
+        var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>().ToList();
 
         if (handlers.Count == 0)
             return;
@@ -24,13 +23,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
             return;
         }
 
-        var tasks = Enumerable.Range(0, handlers.Count).Select(async index =>
-        {
-            await using var scope = serviceProvider.CreateAsyncScope();
-            var scopedHandlers = scope.ServiceProvider.GetServices<INotificationHandler<TNotification>>().ToList();
-            await scopedHandlers[index].Handle((TNotification)notification, cancellationToken);
-        });
-
+        var tasks = handlers.Select(h => h.Handle((TNotification)notification, cancellationToken));
         await Task.WhenAll(tasks);
     }
 }
