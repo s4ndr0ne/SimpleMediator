@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Linq.Expressions;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
 
@@ -7,8 +8,8 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private readonly ConcurrentDictionary<Type, object> _requestHandlers = new();
-    private readonly ConcurrentDictionary<Type, NotificationHandlerWrapper> _notificationHandlers = new();
+    private static readonly ConcurrentDictionary<Type, Func<object>> _requestHandlerFactories = new();
+    private static readonly ConcurrentDictionary<Type, Func<object>> _notificationHandlerFactories = new();
 
     public Mediator(IServiceProvider serviceProvider)
     {
@@ -26,8 +27,13 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
-            t => Activator.CreateInstance(typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse)))!);
+        var factory = _requestHandlerFactories.GetOrAdd(requestType, t =>
+        {
+            var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse));
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+        });
+
+        var handler = (RequestHandlerWrapper<TResponse>)factory();
 
         return await handler.Handle(request, _serviceProvider, cancellationToken);
     }
@@ -38,10 +44,14 @@ public class Mediator : IMediator
 
         var notificationType = notification.GetType();
 
-        var handler = _notificationHandlers.GetOrAdd(notificationType,
-            t => (NotificationHandlerWrapper)Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t))!);
+        var factory = _notificationHandlerFactories.GetOrAdd(notificationType, t =>
+        {
+            var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+        });
+
+        var handler = (NotificationHandlerWrapper)factory();
 
         await handler.Handle(notification, _serviceProvider, cancellationToken);
-    }  
-    
+    }
 }
