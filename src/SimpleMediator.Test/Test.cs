@@ -198,7 +198,7 @@ public class UnitTest1
     }
 
     [Fact]
-    public async Task Send_ResolvesScopedService_PerInvocation()
+    public async Task Send_UsesSameScopedService_WithinSameScope()
     {
         // Arrange
         var services = new ServiceCollection();
@@ -206,14 +206,18 @@ public class UnitTest1
         services.AddTransient<IRequestHandler<ScopedRequest, Guid>, ScopedRequestHandler>();
 
         var provider = services.BuildServiceProvider();
-        var mediator = new Mediator(provider);
+        
+        using (var scope = provider.CreateScope())
+        {
+            var mediator = new Mediator(scope.ServiceProvider);
 
-        // Act
-        var id1 = await mediator.Send<Guid>(new ScopedRequest());
-        var id2 = await mediator.Send<Guid>(new ScopedRequest());
+            // Act
+            var id1 = await mediator.Send<Guid>(new ScopedRequest());
+            var id2 = await mediator.Send<Guid>(new ScopedRequest());
 
-        // Assert - each Send creates its own scope so ScopedDep should differ
-        Assert.NotEqual(id1, id2);
+            // Assert - mediator uses the provided service provider (scope), so dependencies should be the same
+            Assert.Equal(id1, id2);
+        }
     }
 
     public record ScopedRequest() : IRequest<Guid>;

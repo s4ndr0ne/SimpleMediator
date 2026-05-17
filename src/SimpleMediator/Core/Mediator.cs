@@ -29,9 +29,7 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
             t => Activator.CreateInstance(typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse)))!);
 
-        // create a scope for resolving handlers so scoped services work correctly
-        using var scope = _serviceProvider.CreateScope();
-        return await handler.Handle(request, scope.ServiceProvider, cancellationToken);
+        return await handler.Handle(request, _serviceProvider, cancellationToken);
     }
 
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
@@ -43,8 +41,7 @@ public class Mediator : IMediator
         var handler = _notificationHandlers.GetOrAdd(notificationType,
             t => (NotificationHandlerWrapper)Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t))!);
 
-        using var scope = _serviceProvider.CreateScope();
-        await handler.Handle(notification, scope.ServiceProvider, cancellationToken);
+        await handler.Handle(notification, _serviceProvider, cancellationToken);
     }  
     
 }

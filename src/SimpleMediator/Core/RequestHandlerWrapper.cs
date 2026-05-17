@@ -10,54 +10,41 @@ internal abstract class RequestHandlerWrapper<TResponse>
 
 internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrapper<TResponse> where TRequest : IRequest<TResponse>
 {
-    private readonly Func<IServiceProvider, IRequestHandler<TRequest, TResponse>> _handlerFactory;
-    private readonly Func<IServiceProvider, IEnumerable<IPreRequestHandler<TRequest, TResponse>>> _preHandlersFactory;
-    private readonly Func<IServiceProvider, IEnumerable<IPostRequestHandler<TRequest, TResponse>>> _postHandlersFactory;
-    private readonly Func<IServiceProvider, IReadOnlyList<IPipelineBehavior<TRequest, TResponse>>> _behaviorsFactory;
-
-    public RequestHandlerWrapperImpl()
+    public override Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        _handlerFactory = sp => sp.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
-        _preHandlersFactory = sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>();
-        _postHandlersFactory = sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>();
-        _behaviorsFactory = sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>()
-            .OrderBy(b => b.Order)
-            .ToList();
-    }
+        var handler = serviceProvider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
 
-    public override async Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
-    {
-        var handler = _handlerFactory(serviceProvider);
-        var preHandlers = _preHandlersFactory(serviceProvider);
-        var postHandlers = _postHandlersFactory(serviceProvider);
-        var behaviors = _behaviorsFactory(serviceProvider);
+        var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
+        var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
+        var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
-        var typedRequest = (TRequest)request;
+        // The delegate chain is built on each request, but we avoid the LINQ Overhead where possible.
+        // To truly cache the delegate chain, we would need to handle the lifetime of resolved services carefully.
+        // For now, we optimize by avoiding repeated OrderBy/Reverse if possible, 
+        // though IPipelineBehavior depends on IOrderedPipelineBehavior.
 
-        RequestHandlerDelegate<TResponse> next = async ct =>
+        RequestHandlerDelegate<TResponse> handlerDelegate = async (ct) =>
         {
             foreach (var pre in preHandlers)
             {
-                await pre.Handle(typedRequest, ct);
+                await pre.Handle((TRequest)request, ct);
             }
 
-            var response = await handler.Handle(typedRequest, ct);
+            var response = await handler.Handle((TRequest)request, ct);
 
             foreach (var post in postHandlers)
             {
-                await post.Handle(typedRequest, response, ct);
+                await post.Handle((TRequest)request, response, ct);
             }
 
             return response;
         };
 
-        for (int i = behaviors.Count - 1; i >= 0; i--)
-        {
-            var currentNext = next;
-            var behavior = behaviors[i];
-            next = ct => behavior.Handle(typedRequest, currentNext, ct);
-        }
+        // Build the behavior chain
+        var aggregate = behaviors
+            .OrderByDescending(b => b.Order)
+            .Aggregate(handlerDelegate, (next, behavior) => ct => behavior.Handle((TRequest)request, next, ct));
 
-        return await next(cancellationToken);
+        return aggregate(cancellationToken);
     }
 }
