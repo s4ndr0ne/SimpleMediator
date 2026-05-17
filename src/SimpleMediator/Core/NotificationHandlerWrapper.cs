@@ -12,14 +12,25 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
 {
     public override Task Handle(INotification notification, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>();
+        using var discoveryScope = serviceProvider.CreateScope();
+        var handlers = discoveryScope.ServiceProvider.GetServices<INotificationHandler<TNotification>>().ToList();
 
-        if (!handlers.Any())
+        if (handlers.Count == 0)
+            return;
+
+        if (handlers.Count == 1)
         {
-            return Task.CompletedTask;
+            await handlers[0].Handle((TNotification)notification, cancellationToken);
+            return;
         }
 
-        var tasks = handlers.Select(h => h.Handle((TNotification)notification, cancellationToken));
-        return Task.WhenAll(tasks);
+        var tasks = Enumerable.Range(0, handlers.Count).Select(async index =>
+        {
+            await using var scope = serviceProvider.CreateAsyncScope();
+            var scopedHandlers = scope.ServiceProvider.GetServices<INotificationHandler<TNotification>>().ToList();
+            await scopedHandlers[index].Handle((TNotification)notification, cancellationToken);
+        });
+
+        await Task.WhenAll(tasks);
     }
 }
