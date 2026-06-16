@@ -1,12 +1,13 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Interfaces;
 
 namespace SimpleMediator;
 
 public class SimpleMediatorOptions
 {
     internal List<Assembly> Assemblies { get; } = new();
-    internal List<BehaviorRegistration> Behaviors { get; } = new();
+    internal List<Type> Behaviors { get; } = new();
     public ServiceLifetime DefaultLifetime { get; set; } = ServiceLifetime.Scoped;
 
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
@@ -15,15 +16,28 @@ public class SimpleMediatorOptions
         return this;
     }
 
-    public SimpleMediatorOptions AddBehavior(Type behaviorType, int order = 0)
+    /// <summary>
+    /// Registers a pipeline behavior. Execution order is controlled by the behavior's
+    /// <see cref="IPipelineBehavior{TRequest, TResponse}"/> <c>Order</c> property
+    /// (lower runs first / outermost).
+    /// </summary>
+    public SimpleMediatorOptions AddBehavior(Type behaviorType)
     {
-        Behaviors.Add(new BehaviorRegistration(behaviorType, order));
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        var implementsPipelineBehavior = behaviorType.GetInterfaces()
+            .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+
+        if (!implementsPipelineBehavior)
+        {
+            throw new ArgumentException(
+                $"Type '{behaviorType.FullName}' must implement {typeof(IPipelineBehavior<,>).Name}. " +
+                "Register either an open generic type (e.g. typeof(MyBehavior<,>)) or a closed type " +
+                "implementing IPipelineBehavior<TRequest, TResponse>.",
+                nameof(behaviorType));
+        }
+
+        Behaviors.Add(behaviorType);
         return this;
     }
-}
-
-public record BehaviorRegistration(Type BehaviorType, int Order)
-{
-    public int Order { get; } = Order;
-    public Type BehaviorType { get; } = BehaviorType;
 }

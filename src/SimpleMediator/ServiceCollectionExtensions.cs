@@ -27,7 +27,7 @@ public static class ServiceCollectionExtensions
             }
 
             var filteredTypes = types
-                .Where(t => !t.IsAbstract && !t.IsInterface);
+                .Where(t => !t.IsAbstract && !t.IsInterface && !t.IsGenericTypeDefinition);
 
             foreach (var type in filteredTypes)
             {
@@ -47,9 +47,26 @@ public static class ServiceCollectionExtensions
             }
         }
 
-        foreach (var behavior in options.Behaviors.OrderBy(b => b.Order))
+        // Execution order is determined by each behavior's Order property at request time
+        // (see RequestHandlerWrapperImpl), so registration order here is irrelevant.
+        foreach (var behaviorType in options.Behaviors)
         {
-            services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behavior.BehaviorType, options.DefaultLifetime));
+            if (behaviorType.IsGenericTypeDefinition)
+            {
+                services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime));
+            }
+            else
+            {
+                // Closed/concrete behavior: register it against each closed IPipelineBehavior<,>
+                // interface it implements so it can be resolved for those specific request types.
+                var closedInterfaces = behaviorType.GetInterfaces()
+                    .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+
+                foreach (var closedInterface in closedInterfaces)
+                {
+                    services.Add(new ServiceDescriptor(closedInterface, behaviorType, options.DefaultLifetime));
+                }
+            }
         }
 
         return services;

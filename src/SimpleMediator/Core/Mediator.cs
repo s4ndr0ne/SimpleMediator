@@ -8,7 +8,7 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private static readonly ConcurrentDictionary<Type, Func<object>> _requestHandlerFactories = new();
+    private static readonly ConcurrentDictionary<(Type Request, Type Response), Func<object>> _requestHandlerFactories = new();
     private static readonly ConcurrentDictionary<Type, Func<object>> _notificationHandlerFactories = new();
 
     public Mediator(IServiceProvider serviceProvider)
@@ -27,9 +27,12 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        var factory = _requestHandlerFactories.GetOrAdd(requestType, t =>
+        // Key by both request and response type: IRequest<TResponse> is covariant, so the same
+        // request type can be sent with different TResponse (e.g. Send<object>). Keying by request
+        // type alone would cache a wrapper for the wrong response type and throw on the cast below.
+        var factory = _requestHandlerFactories.GetOrAdd((requestType, typeof(TResponse)), key =>
         {
-            var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(t, typeof(TResponse));
+            var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response);
             return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
         });
 

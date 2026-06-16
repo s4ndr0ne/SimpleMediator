@@ -1,9 +1,10 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SimpleMediator;
 using SimpleMediator.Core;
 using SimpleMediator.Interfaces;
 
-namespace SimpleMeediator.Test;
+namespace SimpleMediator.Test;
 
 public class UnitTest1
 {
@@ -248,6 +249,182 @@ public class UnitTest1
         public Task<Guid> Handle(ScopedRequest request, CancellationToken cancellationToken)
         {
             return Task.FromResult(_dep.Id);
+        }
+    }
+
+    // ---- Pipeline behavior ordering by Order property ----
+
+    [Fact]
+    public async Task Behaviors_RunInAscendingOrderOfOrderProperty()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            // Registered out of order on purpose; the Order property decides execution order.
+            options.AddBehavior(typeof(SecondBehavior<,>)); // Order = 10
+            options.AddBehavior(typeof(FirstBehavior<,>));  // Order = 1
+        });
+        services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.Send<string>(new OrderedRequest());
+
+        // Assert - lowest Order is outermost (runs first, unwinds last)
+        Assert.Equal(
+            new[] { "first:before", "second:before", "handler", "second:after", "first:after" },
+            probe.Events.ToArray());
+    }
+
+    [Fact]
+    public async Task ClosedBehavior_IsRegisteredAndInvoked()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            // A concrete, non-open-generic behavior.
+            options.AddBehavior(typeof(ClosedOrderedBehavior));
+        });
+        services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.Send<string>(new OrderedRequest());
+
+        // Assert
+        Assert.Contains("closed:before", probe.Events);
+        Assert.Contains("closed:after", probe.Events);
+    }
+
+    [Fact]
+    public void AddBehavior_Throws_WhenTypeDoesNotImplementPipelineBehavior()
+    {
+        var services = new ServiceCollection();
+
+        Assert.Throws<ArgumentException>(() =>
+            services.AddSimpleMediator(options => options.AddBehavior(typeof(NotABehavior))));
+    }
+
+    public record OrderedRequest() : IRequest<string>;
+
+    public class OrderedRequestHandler : IRequestHandler<OrderedRequest, string>
+    {
+        private readonly CallProbe _probe;
+        public OrderedRequestHandler(CallProbe probe) => _probe = probe;
+
+        public Task<string> Handle(OrderedRequest request, CancellationToken cancellationToken)
+        {
+            _probe.Record("handler");
+            return Task.FromResult("ok");
+        }
+    }
+
+    public class FirstBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        private readonly CallProbe _probe;
+        public FirstBehavior(CallProbe probe) => _probe = probe;
+
+        public int Order => 1;
+
+        public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+        {
+            _probe.Record("first:before");
+            var response = await next(cancellationToken);
+            _probe.Record("first:after");
+            return response;
+        }
+    }
+
+    public class SecondBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        private readonly CallProbe _probe;
+        public SecondBehavior(CallProbe probe) => _probe = probe;
+
+        public int Order => 10;
+
+        public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+        {
+            _probe.Record("second:before");
+            var response = await next(cancellationToken);
+            _probe.Record("second:after");
+            return response;
+        }
+    }
+
+    public class ClosedOrderedBehavior : IPipelineBehavior<OrderedRequest, string>
+    {
+        private readonly CallProbe _probe;
+        public ClosedOrderedBehavior(CallProbe probe) => _probe = probe;
+
+        public int Order => 0;
+
+        public async Task<string> Handle(OrderedRequest request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
+        {
+            _probe.Record("closed:before");
+            var response = await next(cancellationToken);
+            _probe.Record("closed:after");
+            return response;
+        }
+    }
+
+    public class NotABehavior { }
+
+    // ---- Notifications with multiple handlers ----
+
+    [Fact]
+    public async Task Publish_InvokesAllHandlers_WhenMultipleRegistered()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationHandler>();
+        services.AddTransient<INotificationHandler<TestNotification>, SecondNotificationHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        await mediator.Publish(new TestNotification("N1"));
+
+        // Assert
+        Assert.Equal(2, probe.Count);
+        Assert.Contains("First:N1", probe.Events);
+        Assert.Contains("Second:N1", probe.Events);
+    }
+
+    [Fact]
+    public async Task Publish_DoesNotThrow_WhenNoHandlersRegistered()
+    {
+        var provider = new ServiceCollection().BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        await mediator.Publish(new TestNotification("none"));
+    }
+
+    public class SecondNotificationHandler : INotificationHandler<TestNotification>
+    {
+        private readonly CallProbe _probe;
+        public SecondNotificationHandler(CallProbe probe) => _probe = probe;
+
+        public Task Handle(TestNotification notification, CancellationToken cancellationToken)
+        {
+            _probe.Record($"Second:{notification.Name}");
+            return Task.CompletedTask;
         }
     }
 

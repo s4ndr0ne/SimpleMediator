@@ -94,6 +94,17 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 }
 ```
 
+Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost), not by registration order. You can register an open generic type or a closed type bound to a specific request/response pair:
+
+```csharp
+services.AddSimpleMediator(options =>
+{
+    options.RegisterAssembly(typeof(Program).Assembly);
+    options.AddBehavior(typeof(LoggingBehavior<,>)); // open generic, applies to every request
+    options.AddBehavior(typeof(MySpecificBehavior)); // closed, implements IPipelineBehavior<MyRequest, MyResponse>
+});
+```
+
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.
 
