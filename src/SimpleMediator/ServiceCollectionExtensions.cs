@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator.Core;
 using SimpleMediator.Interfaces;
 
@@ -9,10 +10,13 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddSimpleMediator(this IServiceCollection services, Action<SimpleMediatorOptions> configure)
     {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+
         var options = new SimpleMediatorOptions();
         configure(options);
 
-       services.Add(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), options.DefaultLifetime));
+        services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), options.DefaultLifetime));
 
         foreach (var assembly in options.Assemblies)
         {
@@ -40,7 +44,7 @@ public static class ServiceCollectionExtensions
                         if (genericTypeDefinition == typeof(IRequestHandler<,>) || genericTypeDefinition == typeof(INotificationHandler<>) ||
                             genericTypeDefinition == typeof(IPreRequestHandler<,>) || genericTypeDefinition == typeof(IPostRequestHandler<,>))
                         {
-                            services.Add(new ServiceDescriptor(@interface, type, options.DefaultLifetime));
+                            services.TryAddEnumerable(new ServiceDescriptor(@interface, type, options.DefaultLifetime));
                         }
                     }
                 }
@@ -53,7 +57,7 @@ public static class ServiceCollectionExtensions
         {
             if (behaviorType.IsGenericTypeDefinition)
             {
-                services.Add(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime));
+                services.TryAddEnumerable(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime));
             }
             else
             {
@@ -64,7 +68,7 @@ public static class ServiceCollectionExtensions
 
                 foreach (var closedInterface in closedInterfaces)
                 {
-                    services.Add(new ServiceDescriptor(closedInterface, behaviorType, options.DefaultLifetime));
+                    services.TryAddEnumerable(new ServiceDescriptor(closedInterface, behaviorType, options.DefaultLifetime));
                 }
             }
         }

@@ -46,7 +46,52 @@ public class UnitTest1
 
         // Assert
         Assert.NotNull(caught);
-        Assert.Contains("No service for type", caught.Message);
+        Assert.Contains("No request handler registered", caught.Message);
+    }
+
+    [Fact]
+    public async Task Send_ThrowsInvalidOperationException_WhenMultipleHandlersRegisteredForSameRequest()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
+        services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mediator.Send<string>(new PingRequest("hello")));
+
+        // Assert
+        Assert.Contains("Multiple request handlers registered", exception.Message);
+    }
+
+    [Fact]
+    public async Task Publish_DoesNotDuplicateHandlers_WhenAssemblyRegisteredMultipleTimes()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            var assembly = typeof(UnitTest1).Assembly;
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(assembly);
+            options.RegisterAssembly(assembly);
+        });
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.Publish(new TestNotification("N1"));
+
+        // Assert - FirstNotificationHandler and SecondNotificationHandler should run once each.
+        Assert.Equal(2, probe.Count);
+        Assert.Equal(1, probe.Events.Count(e => e == "First:N1"));
+        Assert.Equal(1, probe.Events.Count(e => e == "Second:N1"));
     }
 
     [Fact]
@@ -117,6 +162,12 @@ public class UnitTest1
     {
         public Task<string> Handle(PingRequest request, CancellationToken cancellationToken)
             => Task.FromResult($"PONG: {request.Message}");
+    }
+
+    public class DuplicatePingRequestHandler : IRequestHandler<PingRequest, string>
+    {
+        public Task<string> Handle(PingRequest request, CancellationToken cancellationToken)
+            => Task.FromResult($"DUPLICATE: {request.Message}");
     }
 
     public record UnhandledRequest(string Payload) : IRequest<string>;

@@ -7,7 +7,7 @@ SimpleMediator is designed to be fast, reliable, and "DI-friendly", following mo
 
 ## Core Features & Optimizations
 
-- **🚀 Extreme Performance**: Uses **Compiled Expression Trees** (MSIL) for handler instantiation. Unlike standard reflection-based mediators, SimpleMediator compiles factories at runtime, making execution nearly as fast as native code.
+- **🚀 High Performance Dispatch**: Uses cached **Compiled Expression Trees** (MSIL) for mediator wrapper dispatch, while handler instances are still resolved correctly through Microsoft Dependency Injection.
 - **🛡️ Native Scope Support**: Correctly respects the surrounding Dependency Injection scope. Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers.
 - **⚡ Parallel Notifications**: Notification handlers are executed in parallel via `Task.WhenAll`, maximizing throughput for event-driven logic.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, and `IPostRequestHandler` with support for ordering and open generics.
@@ -113,10 +113,10 @@ Lightweight hooks that run *inside* the behavior pipeline, right before or after
 
 ## Why SimpleMediator?
 
-Most mediator implementations rely on `Activator.CreateInstance` or heavy reflection at every call. SimpleMediator uses a **hybrid approach**:
+SimpleMediator uses a **hybrid approach**:
 1. **Discovery**: Reflection is used once at startup to find handlers.
-2. **Compilation**: The first time a request is sent, an **Expression Tree** is compiled into a native factory.
-3. **Execution**: Subsequent calls use the compiled factory and a cached delegate chain, providing near-native performance.
+2. **Compilation**: The first time a request or notification type is used, an **Expression Tree** is compiled into a cached wrapper factory.
+3. **Execution**: Subsequent calls reuse the cached wrapper factory, while actual handlers and pipeline services are resolved through Microsoft Dependency Injection so lifetimes and scopes remain correct.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

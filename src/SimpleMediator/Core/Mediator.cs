@@ -27,9 +27,8 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        // Key by both request and response type: IRequest<TResponse> is covariant, so the same
-        // request type can be sent with different TResponse (e.g. Send<object>). Keying by request
-        // type alone would cache a wrapper for the wrong response type and throw on the cast below.
+        // Key by both request and response type so cache entries remain correct even if callers
+        // use explicit generic response types.
         var factory = _requestHandlerFactories.GetOrAdd((requestType, typeof(TResponse)), key =>
         {
             var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response);

@@ -12,7 +12,23 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 {
     public override Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var handler = serviceProvider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
+        var handlers = serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>();
+        using var enumerator = handlers.GetEnumerator();
+
+        if (!enumerator.MoveNext())
+        {
+            throw new InvalidOperationException(
+                $"No request handler registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'.");
+        }
+
+        var handler = enumerator.Current;
+
+        if (enumerator.MoveNext())
+        {
+            throw new InvalidOperationException(
+                $"Multiple request handlers registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'. " +
+                "A request can only have one handler.");
+        }
 
         var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
         var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
