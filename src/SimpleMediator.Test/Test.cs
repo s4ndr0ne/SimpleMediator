@@ -479,4 +479,545 @@ public class UnitTest1
         }
     }
 
+    // ---- Notification publish strategy (sequential default vs parallel) ----
+
+    [Fact]
+    public async Task Publish_IsSequentialByDefault_HandlersDoNotOverlap()
+    {
+        // Arrange - default strategy (no NotificationPublishStrategy set).
+        var probe = new ConcurrencyProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.Publish(new ConcurrencyNotification());
+
+        // Assert - sequential dispatch never runs two handlers at once.
+        Assert.Equal(2, probe.Entered);
+        Assert.Equal(1, probe.MaxObserved);
+    }
+
+    [Fact]
+    public async Task Publish_RunsInParallel_WhenParallelStrategyConfigured()
+    {
+        // Arrange
+        var probe = new ConcurrencyProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        await mediator.Publish(new ConcurrencyNotification());
+
+        // Assert - both handlers were in-flight simultaneously.
+        Assert.Equal(2, probe.Entered);
+        Assert.Equal(2, probe.MaxObserved);
+    }
+
+    [Fact]
+    public async Task Publish_Parallel_AggregatesAllHandlerExceptions()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act - two handlers both throw.
+        var ex = await Assert.ThrowsAsync<AggregateException>(() =>
+            mediator.Publish(new FailingNotification()));
+
+        // Assert - every failure is surfaced, not just the first.
+        Assert.Equal(2, ex.InnerExceptions.Count);
+        Assert.All(ex.InnerExceptions, e => Assert.IsType<InvalidOperationException>(e));
+    }
+
+    [Fact]
+    public async Task Publish_Sequential_StopsAfterFirstException()
+    {
+        // Arrange - manual registration so dispatch order is deterministic
+        // (throwing handler first). new Mediator(provider) => default Sequential.
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddTransient<INotificationHandler<FailFastNotification>, ThrowingFailFastHandler>();
+        services.AddTransient<INotificationHandler<FailFastNotification>, RecordingFailFastHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mediator.Publish(new FailFastNotification()));
+
+        // Assert - the second handler never ran.
+        Assert.Empty(probe.Events);
+    }
+
+    [Fact]
+    public void Mediator_IsRegisteredAsTransient_ResolvesFreshInstancePerRequest()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var provider = services.BuildServiceProvider();
+
+        // Act - resolve twice from the SAME (root) provider.
+        var first = provider.GetRequiredService<IMediator>();
+        var second = provider.GetRequiredService<IMediator>();
+
+        // Assert - Transient yields distinct instances (Scoped/Singleton would not).
+        Assert.NotSame(first, second);
+    }
+
+    public record ConcurrencyNotification() : INotification;
+
+    // Tracks the maximum number of handlers running at the same time.
+    public class ConcurrencyProbe
+    {
+        private int _current;
+        private int _max;
+        private int _entered;
+        public int MaxObserved => Volatile.Read(ref _max);
+        public int Entered => Volatile.Read(ref _entered);
+
+        public async Task EnterAndWait(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref _entered);
+            var now = Interlocked.Increment(ref _current);
+            UpdateMax(now);
+            try
+            {
+                await Task.Delay(80, cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _current);
+            }
+        }
+
+        private void UpdateMax(int candidate)
+        {
+            int snapshot;
+            do
+            {
+                snapshot = Volatile.Read(ref _max);
+                if (candidate <= snapshot) return;
+            }
+            while (Interlocked.CompareExchange(ref _max, candidate, snapshot) != snapshot);
+        }
+    }
+
+    public class FirstConcurrencyHandler : INotificationHandler<ConcurrencyNotification>
+    {
+        private readonly ConcurrencyProbe _probe;
+        public FirstConcurrencyHandler(ConcurrencyProbe probe) => _probe = probe;
+        public Task Handle(ConcurrencyNotification notification, CancellationToken cancellationToken)
+            => _probe.EnterAndWait(cancellationToken);
+    }
+
+    public class SecondConcurrencyHandler : INotificationHandler<ConcurrencyNotification>
+    {
+        private readonly ConcurrencyProbe _probe;
+        public SecondConcurrencyHandler(ConcurrencyProbe probe) => _probe = probe;
+        public Task Handle(ConcurrencyNotification notification, CancellationToken cancellationToken)
+            => _probe.EnterAndWait(cancellationToken);
+    }
+
+    public record FailingNotification() : INotification;
+
+    public class FirstFailingHandler : INotificationHandler<FailingNotification>
+    {
+        public Task Handle(FailingNotification notification, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("first failed");
+    }
+
+    public class SecondFailingHandler : INotificationHandler<FailingNotification>
+    {
+        public Task Handle(FailingNotification notification, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("second failed");
+    }
+
+    public record FailFastNotification() : INotification;
+
+    public class ThrowingFailFastHandler : INotificationHandler<FailFastNotification>
+    {
+        public Task Handle(FailFastNotification notification, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("boom");
+    }
+
+    public class RecordingFailFastHandler : INotificationHandler<FailFastNotification>
+    {
+        private readonly CallProbe _probe;
+        public RecordingFailFastHandler(CallProbe probe) => _probe = probe;
+        public Task Handle(FailFastNotification notification, CancellationToken cancellationToken)
+        {
+            _probe.Record("second-ran");
+            return Task.CompletedTask;
+        }
+    }
+
+    // ---- Open-generic request handlers (request type is itself generic) ----
+
+    [Fact]
+    public async Task Send_ResolvesOpenGenericHandler_ForDifferentClosedRequestTypes()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act - the SAME open-generic handler serves both closed request types.
+        var asInt = await mediator.Send<int>(new EchoRequest<int>(42));
+        var asString = await mediator.Send<string>(new EchoRequest<string>("hi"));
+
+        // Assert
+        Assert.Equal(42, asInt);
+        Assert.Equal("hi", asString);
+    }
+
+    [Fact]
+    public async Task Send_OpenGenericHandler_GetsConstructorDependenciesInjected()
+    {
+        // Arrange
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        var result = await mediator.Send<string>(new WrapRequest<int>(7));
+
+        // Assert - handler ran with its injected dependency and saw the closed type arg.
+        Assert.Equal("[Int32] 7", result);
+        Assert.Contains("wrap:7", probe.Events);
+    }
+
+    [Fact]
+    public async Task Send_Throws_WhenClosedAndOpenGenericHandlersBothMatch()
+    {
+        // Arrange - a closed handler and an open-generic handler both satisfy AmbiguousRequest<int>.
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mediator.Send<int>(new AmbiguousRequest<int>(1)));
+        Assert.Contains("Multiple request handlers registered", ex.Message);
+    }
+
+    public record EchoRequest<T>(T Value) : IRequest<T>;
+
+    public class EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>
+    {
+        public Task<T> Handle(EchoRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Value);
+    }
+
+    public record WrapRequest<T>(T Value) : IRequest<string>;
+
+    public class WrapHandler<T> : IRequestHandler<WrapRequest<T>, string>
+    {
+        private readonly CallProbe _probe;
+        public WrapHandler(CallProbe probe) => _probe = probe;
+
+        public Task<string> Handle(WrapRequest<T> request, CancellationToken cancellationToken)
+        {
+            _probe.Record($"wrap:{request.Value}");
+            return Task.FromResult($"[{typeof(T).Name}] {request.Value}");
+        }
+    }
+
+    public record AmbiguousRequest<T>(T Value) : IRequest<T>;
+
+    public class OpenAmbiguousHandler<T> : IRequestHandler<AmbiguousRequest<T>, T>
+    {
+        public Task<T> Handle(AmbiguousRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Value);
+    }
+
+    public class ClosedAmbiguousHandler : IRequestHandler<AmbiguousRequest<int>, int>
+    {
+        public Task<int> Handle(AmbiguousRequest<int> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Value);
+    }
+
+    // ---- Exception-handling pipeline ----
+
+    [Fact]
+    public async Task Send_ExceptionHandler_RecoversWithSubstituteResponse()
+    {
+        // Arrange - manual registration keeps the test isolated from assembly scanning.
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<RecoverableRequest, string>, ThrowingRequestHandler>();
+        services.AddTransient<IRequestExceptionHandler<RecoverableRequest, string>, RecoveringExceptionHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        var result = await mediator.Send<string>(new RecoverableRequest("x"));
+
+        // Assert - the thrown exception was swallowed and replaced by the substitute.
+        Assert.Equal("recovered: kaboom", result);
+    }
+
+    [Fact]
+    public async Task Send_OpenGenericExceptionHandler_RunsButRethrows_WhenNotHandled()
+    {
+        // Arrange - a catch-all open-generic exception handler (registered the MS.DI-native way).
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddTransient<IRequestHandler<RecoverableRequest, string>, ThrowingRequestHandler>();
+        services.AddTransient(typeof(IRequestExceptionHandler<,>), typeof(LoggingExceptionHandler<,>));
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act + Assert - handler observed the exception but did not handle it, so it propagates.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            mediator.Send<string>(new RecoverableRequest("y")));
+        Assert.Equal("kaboom", ex.Message);
+        Assert.Contains("logged:kaboom", probe.Events);
+    }
+
+    public record RecoverableRequest(string Message) : IRequest<string>;
+
+    public class ThrowingRequestHandler : IRequestHandler<RecoverableRequest, string>
+    {
+        public Task<string> Handle(RecoverableRequest request, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("kaboom");
+    }
+
+    public class RecoveringExceptionHandler : IRequestExceptionHandler<RecoverableRequest, string>
+    {
+        public Task Handle(RecoverableRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            state.SetHandled($"recovered: {exception.Message}");
+            return Task.CompletedTask;
+        }
+    }
+
+    public class LoggingExceptionHandler<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        private readonly CallProbe _probe;
+        public LoggingExceptionHandler(CallProbe probe) => _probe = probe;
+
+        public Task Handle(TRequest request, Exception exception, RequestExceptionHandlerState<TResponse> state, CancellationToken cancellationToken)
+        {
+            _probe.Record($"logged:{exception.Message}");
+            return Task.CompletedTask; // intentionally does not SetHandled
+        }
+    }
+
+    // ---- Cancellation semantics ----
+
+    [Fact]
+    public async Task Send_PropagatesCancellation_AndExceptionHandlerDoesNotSwallowIt()
+    {
+        // Arrange - a greedy exception handler would "recover" any exception, but a genuine
+        // cancellation must still propagate.
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<CancelDuringRequest, string>, CancelDuringHandler>();
+        services.AddTransient<IRequestExceptionHandler<CancelDuringRequest, string>, GreedyExceptionHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+        // Act + Assert - cancellation wins over the exception handler.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            mediator.Send<string>(new CancelDuringRequest(), cts.Token));
+    }
+
+    public record CancelDuringRequest() : IRequest<string>;
+
+    public class CancelDuringHandler : IRequestHandler<CancelDuringRequest, string>
+    {
+        public async Task<string> Handle(CancelDuringRequest request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return "done";
+        }
+    }
+
+    public class GreedyExceptionHandler : IRequestExceptionHandler<CancelDuringRequest, string>
+    {
+        public Task Handle(CancelDuringRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            state.SetHandled("recovered");
+            return Task.CompletedTask;
+        }
+    }
+
+    // ---- Exception handler ordering ----
+
+    [Fact]
+    public async Task ExceptionHandlers_RunInAscendingOrder_RegardlessOfRegistrationOrder()
+    {
+        // Arrange - register high-Order first; the lower-Order handler must still run first.
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<OrderedFailRequest, string>, OrderedFailHandler>();
+        services.AddTransient<IRequestExceptionHandler<OrderedFailRequest, string>, HighOrderExceptionHandler>();
+        services.AddTransient<IRequestExceptionHandler<OrderedFailRequest, string>, LowOrderExceptionHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        // Act
+        var result = await mediator.Send<string>(new OrderedFailRequest());
+
+        // Assert - the lower-Order handler handled it first.
+        Assert.Equal("low", result);
+    }
+
+    public record OrderedFailRequest() : IRequest<string>;
+
+    public class OrderedFailHandler : IRequestHandler<OrderedFailRequest, string>
+    {
+        public Task<string> Handle(OrderedFailRequest request, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("fail");
+    }
+
+    public class HighOrderExceptionHandler : IRequestExceptionHandler<OrderedFailRequest, string>
+    {
+        public int Order => 10;
+        public Task Handle(OrderedFailRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            state.SetHandled("high");
+            return Task.CompletedTask;
+        }
+    }
+
+    public class LowOrderExceptionHandler : IRequestExceptionHandler<OrderedFailRequest, string>
+    {
+        public int Order => 1;
+        public Task Handle(OrderedFailRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            state.SetHandled("low");
+            return Task.CompletedTask;
+        }
+    }
+
+    // ---- Startup validation ----
+
+    [Fact]
+    public void ValidateSimpleMediator_Throws_OnDuplicateClosedHandlers()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
+        services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("Multiple request handlers registered", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateSimpleMediator_Throws_OnClosedAndOpenGenericAmbiguity()
+    {
+        // Isolated scenario: one closed handler plus an open-generic handler that also matches it.
+        // (Built directly via internals so the shared test assembly's other types don't interfere.)
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<AmbiguousRequest<int>, int>, ClosedAmbiguousHandler>();
+        services.AddSingleton(new MediatorConfiguration(
+            NotificationPublishStrategy.Sequential,
+            new[] { typeof(OpenAmbiguousHandler<>) }));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("open-generic handler", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateOnBuild_FailsFast_DuringAddSimpleMediator()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ServiceCollection().AddSimpleMediator(options =>
+            {
+                options.RegisterAssembly(typeof(UnitTest1).Assembly);
+                options.ValidateOnBuild = true;
+            }));
+
+        Assert.Contains("handler", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateSimpleMediator_Throws_OnFactoryAndInstanceDuplicates()
+    {
+        // Two registrations for the same closed handler, neither using an implementation type.
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<PingRequest, string>>(_ => new PingRequestHandler());
+        services.AddSingleton<IRequestHandler<PingRequest, string>>(new PingRequestHandler());
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("Multiple request handlers registered", ex.Message);
+    }
+
+    // ---- Modular registration: repeated AddSimpleMediator calls ----
+
+    [Fact]
+    public async Task AddSimpleMediator_CalledTwice_AccumulatesOpenGenericHandlers()
+    {
+        var services = new ServiceCollection();
+        // First "module": an assembly that contributes no open-generic handlers.
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(IMediator).Assembly));
+        // Second "module": brings EchoHandler<>. Under the old TryAdd-first-wins behaviour the
+        // config from the first call would win and this handler would be lost.
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        var result = await mediator.Send<int>(new EchoRequest<int>(99));
+        Assert.Equal(99, result);
+    }
+
+    // ---- Open-generic handler with an array response ----
+
+    [Fact]
+    public async Task Send_ResolvesOpenGenericHandler_WithArrayResponse()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        var result = await mediator.Send<int[]>(new ArrayEchoRequest<int>(new[] { 1, 2, 3 }));
+
+        Assert.Equal(new[] { 1, 2, 3 }, result);
+    }
+
+    public record ArrayEchoRequest<T>(T[] Values) : IRequest<T[]>;
+
+    public class ArrayEchoHandler<T> : IRequestHandler<ArrayEchoRequest<T>, T[]>
+    {
+        public Task<T[]> Handle(ArrayEchoRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Values);
+    }
+
 }

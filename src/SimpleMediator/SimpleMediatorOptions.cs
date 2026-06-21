@@ -10,6 +10,23 @@ public class SimpleMediatorOptions
     internal HashSet<Type> Behaviors { get; } = new();
     public ServiceLifetime DefaultLifetime { get; set; } = ServiceLifetime.Scoped;
 
+    /// <summary>
+    /// How notifications are dispatched to their handlers. Defaults to
+    /// <see cref="NotificationPublishStrategy.Sequential"/>, which is safe to share a
+    /// scoped service (e.g. <c>DbContext</c>) across handlers. Switch to
+    /// <see cref="NotificationPublishStrategy.Parallel"/> only when handlers are
+    /// independent and do not share non-thread-safe scoped state.
+    /// </summary>
+    public NotificationPublishStrategy NotificationPublishStrategy { get; set; } = NotificationPublishStrategy.Sequential;
+
+    /// <summary>
+    /// When true, <c>AddSimpleMediator</c> runs <c>ValidateSimpleMediator</c> immediately so
+    /// configuration errors (duplicate request handlers, a request matched by both a closed
+    /// and an open-generic handler) fail fast at startup instead of on the first request.
+    /// Defaults to false.
+    /// </summary>
+    public bool ValidateOnBuild { get; set; } = false;
+
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);

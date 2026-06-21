@@ -34,6 +34,14 @@ Console.WriteLine("\n--- Testing Pre/Post Handlers ---");
 var prePostResponse = await mediator.Send(new PrePostRequest { Message = "FromConsole" });
 Console.WriteLine($"PrePost Response: {prePostResponse}");
 
+Console.WriteLine("\n--- Testing Open-Generic Handler ---");
+var echoInt = await mediator.Send(new EchoRequest<int>(42));
+Console.WriteLine($"Echo<int>: {echoInt}");
+var echoString = await mediator.Send(new EchoRequest<string>("hello generics"));
+Console.WriteLine($"Echo<string>: {echoString}");
 
+Console.WriteLine("\n--- Testing Exception Handler ---");
+var recovered = await mediator.Send(new FaultyRequest("boom"));
+Console.WriteLine($"Faulty Response: {recovered}");
 
 Console.WriteLine("\nDone!");
