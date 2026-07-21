@@ -43,7 +43,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./artifacts/*.nupkg
         env:
@@ -51,7 +51,7 @@ jobs:
 
       - name: Create Release Symbols
         id: create_release_symbols
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: ./artifacts/*.snupkg
         env:

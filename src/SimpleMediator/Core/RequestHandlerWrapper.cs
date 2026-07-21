@@ -44,10 +44,13 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
         {
             return await aggregate(cancellationToken);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            // A genuine cancellation on our token must propagate — never let an exception
-            // handler turn it into a "successful" response.
+            // Cancellation — whether from the request's own token or from a linked/alien
+            // token a behavior or handler wired up — is a control-flow signal, not an
+            // error. It is therefore never offered to IRequestExceptionHandler<,> and
+            // propagates straight to the caller, so a greedy handler cannot turn it
+            // into a substitute response.
             throw;
         }
         catch (Exception exception)

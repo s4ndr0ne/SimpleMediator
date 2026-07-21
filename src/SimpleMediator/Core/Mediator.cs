@@ -18,6 +18,7 @@ public class Mediator : IMediator
 
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
         await Send<Unit>(request, cancellationToken);
     }
 

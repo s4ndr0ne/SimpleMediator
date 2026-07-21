@@ -101,8 +101,8 @@ public class UnitTest1
         var probe = new CallProbe();
         var services = new ServiceCollection();
         services.AddSingleton(probe);
-        services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationHandler>();
-       
+services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationHandler>();
+
         var provider = services.BuildServiceProvider();
         var mediator = new Mediator(provider);
 
@@ -113,7 +113,7 @@ public class UnitTest1
 
         // Assert
         Assert.Equal(1, probe.Count);
-        Assert.Contains("First:N1", probe.Events);     
+        Assert.Contains("First:N1", probe.Events);
     }
 
     public class CallProbe
@@ -1018,6 +1018,303 @@ public class UnitTest1
     {
         public Task<T[]> Handle(ArrayEchoRequest<T> request, CancellationToken cancellationToken)
             => Task.FromResult(request.Values);
+    }
+
+    // ---- Open-generic notification and pre/post handlers discovered by scanning ----
+
+    [Fact]
+    public async Task Publish_InvokesOpenGenericNotificationHandler_FromAssemblyScan()
+    {
+        OpenGenericHookProbe.Reset();
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        await mediator.Publish(new OpenGenericObservedNotification("scan"));
+
+        Assert.Equal(new[] { "notification:scan" }, OpenGenericHookProbe.Events.ToArray());
+    }
+
+    [Fact]
+    public async Task Send_InvokesOpenGenericPreAndPostHandlers_FromAssemblyScan()
+    {
+        OpenGenericHookProbe.Reset();
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        var response = await mediator.Send<string>(new OpenGenericHookRequest("scan"));
+
+        Assert.Equal("handled:scan", response);
+        Assert.Equal(new[] { "pre:scan", "post:scan:handled:scan" }, OpenGenericHookProbe.Events.ToArray());
+    }
+
+    public record OpenGenericObservedNotification(string Message) : INotification;
+
+    public record OpenGenericHookRequest(string Message) : IRequest<string>;
+
+    public class OpenGenericHookRequestHandler : IRequestHandler<OpenGenericHookRequest, string>
+    {
+        public Task<string> Handle(OpenGenericHookRequest request, CancellationToken cancellationToken)
+            => Task.FromResult($"handled:{request.Message}");
+    }
+
+    public class OpenGenericNotificationHandler<TNotification> : INotificationHandler<TNotification>
+        where TNotification : INotification
+    {
+        public Task Handle(TNotification notification, CancellationToken cancellationToken)
+        {
+            if (notification is OpenGenericObservedNotification observed)
+            {
+                OpenGenericHookProbe.Record($"notification:{observed.Message}");
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    public class OpenGenericPreHandler<TRequest, TResponse> : IPreRequestHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public Task Handle(TRequest request, CancellationToken cancellationToken)
+        {
+            if (request is OpenGenericHookRequest hook)
+            {
+                OpenGenericHookProbe.Record($"pre:{hook.Message}");
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    public class OpenGenericPostHandler<TRequest, TResponse> : IPostRequestHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public Task Handle(TRequest request, TResponse response, CancellationToken cancellationToken)
+        {
+            if (request is OpenGenericHookRequest hook)
+            {
+                OpenGenericHookProbe.Record($"post:{hook.Message}:{response}");
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private static class OpenGenericHookProbe
+    {
+        private static readonly object Gate = new();
+        private static readonly List<string> RecordedEvents = new();
+
+        public static IReadOnlyList<string> Events
+        {
+            get
+            {
+                lock (Gate)
+                {
+                    return RecordedEvents.ToArray();
+                }
+            }
+        }
+
+        public static void Record(string evt)
+        {
+            lock (Gate)
+            {
+                RecordedEvents.Add(evt);
+            }
+        }
+
+        public static void Reset()
+        {
+            lock (Gate)
+            {
+                RecordedEvents.Clear();
+            }
+        }
+    }
+
+    // ---- Cancellation semantics in Publish(Parallel) ----
+
+    [Fact]
+    public async Task Publish_Parallel_PropagatesCancellation_AsOperationCanceledException()
+    {
+        // Arrange - both handlers observe the supplied token, which we cancel. Without the
+        // cancellation-aware path they would surface as an AggregateException wrapping two
+        // OperationCanceledExceptions — callers expecting cancellation would not see OCE.
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act + Assert - the caller sees OperationCanceledException (not AggregateException).
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            mediator.Publish(new ParallelCancellationNotification(), cts.Token));
+    }
+
+    public record ParallelCancellationNotification() : INotification;
+
+    public class ParallelCancelHandler1 : INotificationHandler<ParallelCancellationNotification>
+    {
+        public Task Handle(ParallelCancellationNotification notification, CancellationToken cancellationToken)
+            => Task.FromException(new OperationCanceledException(cancellationToken));
+    }
+
+    public class ParallelCancelHandler2 : INotificationHandler<ParallelCancellationNotification>
+    {
+        public Task Handle(ParallelCancellationNotification notification, CancellationToken cancellationToken)
+            => Task.FromException(new OperationCanceledException(cancellationToken));
+    }
+
+    // ---- Cancellation from an alien token is not swallowed by IRequestExceptionHandler ----
+
+    [Fact]
+    public async Task Send_PropagatesOperationCanceledException_FromAlienToken_NotSwallowedByExceptionHandler()
+    {
+        // Arrange - the user's token is NOT cancelled, but the handler internally observes
+        // a separate (alien) token that is cancelled. A greedy exception handler must not
+        // swallow that OperationCanceledException and substitute a "recovered" response.
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<AlienCancelRequest, string>, AlienCancelHandler>();
+        services.AddTransient<IRequestExceptionHandler<AlienCancelRequest, string>, GreedyAlienExceptionHandler>();
+        var provider = services.BuildServiceProvider();
+        var mediator = new Mediator(provider);
+
+        using var userCts = new CancellationTokenSource(); // not cancelled
+        using var alienCts = new CancellationTokenSource();
+        alienCts.Cancel(); // pre-cancelled, before the call
+
+        // Act + Assert - cancellation from the alien token propagates to the caller.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            mediator.Send<string>(new AlienCancelRequest(), userCts.Token));
+    }
+
+    public record AlienCancelRequest() : IRequest<string>;
+
+    public class AlienCancelHandler : IRequestHandler<AlienCancelRequest, string>
+    {
+        public Task<string> Handle(AlienCancelRequest request, CancellationToken cancellationToken)
+            => Task.FromException<string>(new OperationCanceledException());
+    }
+
+    public class GreedyAlienExceptionHandler : IRequestExceptionHandler<AlienCancelRequest, string>
+    {
+        public Task Handle(AlienCancelRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            state.SetHandled("recovered"); // must NOT be returned for an OCE
+            return Task.CompletedTask;
+        }
+    }
+
+    // ---- Parameterless AddSimpleMediator overload ----
+
+    [Fact]
+    public async Task AddSimpleMediator_Parameterless_RegistersMediator_AndResolvesHandlersAddedManually()
+    {
+        // Arrange - the convenience overload should still register IMediator, so handlers
+        // added explicitly afterwards resolve correctly with no assembly scan.
+        var services = new ServiceCollection();
+        services.AddSimpleMediator();
+        services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act
+        var response = await mediator.Send<string>(new PingRequest("plain"));
+
+        // Assert
+        Assert.Equal("PONG: plain", response);
+    }
+
+    [Fact]
+    public void AddSimpleMediator_Parameterless_RegistersMediatorAsTransient()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator();
+        var provider = services.BuildServiceProvider();
+
+        var first = provider.GetRequiredService<IMediator>();
+        var second = provider.GetRequiredService<IMediator>();
+
+        Assert.NotSame(first, second);
+    }
+
+    // ---- RequestHandler<TRequest> convenience base class for void requests ----
+
+    [Fact]
+    public async Task Send_VoidRequest_UsesRequestHandlerBaseClass_ToReturnUnit()
+    {
+        // Arrange - the base class lets users implement void handlers without returning
+        // Task<Unit> themselves.
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator();
+        services.AddTransient<IRequestHandler<VoidProbeRequest, Unit>, VoidProbeHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        // Act - Send(IRequest) does not return a value; it must not throw and the handler
+        // must have run exactly once.
+        await mediator.Send(new VoidProbeRequest("ping"));
+
+        // Assert
+        Assert.Equal(new[] { "void:ping" }, probe.Events.ToArray());
+    }
+
+    public record VoidProbeRequest(string Message) : IRequest;
+
+    public class VoidProbeHandler : RequestHandler<VoidProbeRequest>
+    {
+        private readonly CallProbe _probe;
+        public VoidProbeHandler(CallProbe probe) => _probe = probe;
+
+        protected override Task HandleCore(VoidProbeRequest request, CancellationToken cancellationToken)
+        {
+            _probe.Record($"void:{request.Message}");
+            return Task.CompletedTask;
+        }
+    }
+
+    // ---- ValidateOnBuild surfaces open-generic behaviors that can't be closed ----
+
+    [Fact]
+    public void ValidateSimpleMediator_Throws_WhenOpenGenericBehaviorCannotBeClosedByDI()
+    {
+        // Arrange - a behavior whose type parameters do not line up 1:1 with
+        // IPipelineBehavior<TRequest, TResponse> cannot be closed by Microsoft DI. It
+        // should fail validation rather than surface at the first request.
+        // Act + Assert - ValidateOnBuild runs synchronously inside AddSimpleMediator.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            new ServiceCollection().AddSimpleMediator(options =>
+            {
+                options.AddBehavior(typeof(MisalignedBehavior<,>));
+                options.ValidateOnBuild = true;
+            }));
+        Assert.Contains("cannot be closed", ex.Message);
+    }
+
+    /// <summary>
+    /// An open-generic behavior whose parameters are declared in a different order
+    /// than IPipelineBehavior&lt;TRequest, TResponse&gt;. The 1:1 arity check passes but
+    /// the parameter identity check should fail, surfacing the misconfiguration at startup.
+    /// </summary>
+    public class MisalignedBehavior<TResponse, TRequest> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public int Order => 0;
+        public Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+            => next(cancellationToken);
     }
 
 }

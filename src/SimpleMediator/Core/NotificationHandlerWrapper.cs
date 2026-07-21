@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using SimpleMediator.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 namespace SimpleMediator.Core;
@@ -55,17 +56,45 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         {
             await whenAll;
         }
-        catch
+        catch (Exception ex)
         {
             // await Task.WhenAll only rethrows the *first* faulted task's exception.
             // Re-throw the aggregate so callers can observe every handler failure.
-            if (whenAll.Exception is not null)
+            var aggregate = whenAll.Exception;
+
+            // Cancellation is not a handler failure: when the supplied token is
+            // cancelled and every faulted handler threw OperationCanceledException,
+            // surface the original OCE so callers see a normal cancellation rather
+            // than an AggregateException wrapping it. (Matches the Send path.)
+            if (aggregate is not null && IsCancellation(aggregate, cancellationToken))
             {
-                throw whenAll.Exception;
+                ExceptionDispatchInfo.Capture(ex).Throw();
+            }
+
+            if (aggregate is not null)
+            {
+                throw aggregate;
             }
 
             throw;
         }
+    }
+
+    private static bool IsCancellation(AggregateException aggregate, CancellationToken cancellationToken)
+    {
+        if (aggregate.InnerExceptions.Count == 0) return false;
+
+        // The supplied token must be cancelled AND every inner exception must be
+        // an OperationCanceledException. If any handler threw a *real* exception,
+        // we keep the AggregateException path so the caller observes every failure.
+        if (!cancellationToken.IsCancellationRequested) return false;
+
+        foreach (var inner in aggregate.InnerExceptions)
+        {
+            if (inner is not OperationCanceledException) return false;
+        }
+
+        return true;
     }
 
     private static Task InvokeSafely(

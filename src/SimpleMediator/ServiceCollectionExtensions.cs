@@ -23,7 +23,27 @@ public static class ServiceCollectionExtensions
 
         var options = new SimpleMediatorOptions();
         configure(options);
+        return AddSimpleMediatorCore(services, options);
+    }
 
+    /// <summary>
+    /// Convenience overload: registers SimpleMediator with default options (no extra
+    /// assemblies, no behaviors). Equivalent to <c>AddSimpleMediator(_ => {})</c>. Pair
+    /// it with explicit handler registrations, or follow it with another
+    /// <c>AddSimpleMediator</c> call that calls <c>RegisterAssembly</c>.
+    /// </summary>
+    [RequiresUnreferencedCode(ReflectionMessage)]
+    [RequiresDynamicCode(DynamicCodeMessage)]
+    public static IServiceCollection AddSimpleMediator(this IServiceCollection services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        return AddSimpleMediatorCore(services, new SimpleMediatorOptions());
+    }
+
+    [RequiresUnreferencedCode(ReflectionMessage)]
+    [RequiresDynamicCode(DynamicCodeMessage)]
+    private static IServiceCollection AddSimpleMediatorCore(IServiceCollection services, SimpleMediatorOptions options)
+    {
         // The mediator itself is stateless and only forwards the *ambient* IServiceProvider
         // to its wrappers. Registering it Transient (independent of DefaultLifetime) means a
         // mediator resolved inside a scope always uses that scope's provider, so scoped
@@ -166,7 +186,39 @@ public static class ServiceCollectionExtensions
             }
         }
 
+        ValidateOpenGenericBehaviors(services);
+
         return services;
+    }
+
+    // Verifies that every open-generic behavior registered against IPipelineBehavior<,> can
+    // actually be closed by Microsoft DI (its implementation type parameters must line up
+    // 1:1 with the service's). Mismatches would otherwise only surface at request time.
+    private static void ValidateOpenGenericBehaviors(IServiceCollection services)
+    {
+        var openBehaviorDescriptors = services
+            .Where(d => d.ServiceType == typeof(IPipelineBehavior<,>) && d.ImplementationType is { IsGenericTypeDefinition: true })
+            .Select(d => d.ImplementationType!)
+            .ToList();
+
+        foreach (var impl in openBehaviorDescriptors)
+        {
+            var pipelineInterface = impl.GetInterfaces().FirstOrDefault(i =>
+                i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+
+            if (pipelineInterface is null)
+            {
+                continue; // not a behavior after all; AddBehavior already guards this.
+            }
+
+            if (!CanRegisterWithNativeOpenGenericResolution(impl, pipelineInterface, typeof(IPipelineBehavior<,>)))
+            {
+                throw new InvalidOperationException(
+                    $"Open-generic behavior '{impl.FullName}' cannot be closed by Microsoft DI: its type parameters " +
+                    "do not line up 1:1 with IPipelineBehavior<TRequest, TResponse>. Rename them so the service and " +
+                    "implementation share the same parameter list, or register a closed behavior instead.");
+            }
+        }
     }
 
     // Registers (or updates) the singleton MediatorConfiguration, accumulating open-generic
@@ -197,8 +249,8 @@ public static class ServiceCollectionExtensions
 
     // Routes an open-generic implementation to the right place:
     //  - request handlers (request type may be generic) -> collected for on-demand closing;
-    //  - exception handlers with matching arity (catch-all) -> open-generic DI registration,
-    //    which Microsoft DI can close because impl and service type parameters line up 1:1.
+    //  - notification, pre/post, and exception catch-all handlers -> open-generic DI
+    //    registration when impl and service type parameters line up 1:1.
     private static void RegisterOpenGenericType(
         IServiceCollection services,
         Type type,
@@ -220,7 +272,19 @@ public static class ServiceCollectionExtensions
             {
                 implementsRequestHandler = true;
             }
-            else if (genericTypeDefinition == typeof(IRequestExceptionHandler<,>) && type.GetGenericArguments().Length == 2)
+            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(INotificationHandler<>)))
+            {
+                services.TryAddEnumerable(new ServiceDescriptor(typeof(INotificationHandler<>), type, lifetime));
+            }
+            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPreRequestHandler<,>)))
+            {
+                services.TryAddEnumerable(new ServiceDescriptor(typeof(IPreRequestHandler<,>), type, lifetime));
+            }
+            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPostRequestHandler<,>)))
+            {
+                services.TryAddEnumerable(new ServiceDescriptor(typeof(IPostRequestHandler<,>), type, lifetime));
+            }
+            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IRequestExceptionHandler<,>)))
             {
                 services.TryAddEnumerable(new ServiceDescriptor(typeof(IRequestExceptionHandler<,>), type, lifetime));
             }
@@ -230,5 +294,22 @@ public static class ServiceCollectionExtensions
         {
             openGenericRequestHandlers.Add(type);
         }
+    }
+
+    private static bool CanRegisterWithNativeOpenGenericResolution(
+        Type implementationType,
+        Type implementedInterface,
+        Type serviceTypeDefinition)
+    {
+        if (implementedInterface.GetGenericTypeDefinition() != serviceTypeDefinition)
+        {
+            return false;
+        }
+
+        var implementationArguments = implementationType.GetGenericArguments();
+        var serviceArguments = implementedInterface.GetGenericArguments();
+
+        return serviceArguments.Length == implementationArguments.Length
+               && serviceArguments.SequenceEqual(implementationArguments);
     }
 }

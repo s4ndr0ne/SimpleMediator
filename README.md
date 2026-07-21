@@ -167,7 +167,7 @@ public class ValidationExceptionHandler : IRequestExceptionHandler<CreateUser, U
 
 Handlers run in **ascending `Order`** (the `IRequestExceptionHandler<,>.Order` property, default `0`); the first to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning.
 
-> **Cancellation is never swallowed:** an `OperationCanceledException` raised by the request's own `CancellationToken` propagates straight to the caller and is *not* offered to exception handlers.
+> **Cancellation is never swallowed:** an `OperationCanceledException` is treated as control flow, not as an error — it is *never* offered to `IRequestExceptionHandler<,>` and propagates straight to the caller, regardless of whether the cancellation originated from the request's own `CancellationToken` or from a linked/alien token a behavior or handler observed. Likewise, when notification handlers run in `Parallel` and every faulted handler throws `OperationCanceledException` while the supplied token is cancelled, `Publish` surfaces the `OperationCanceledException` itself rather than an `AggregateException` wrapping it.
 
 ## Startup Validation
 Configuration mistakes (two handlers for one request, or a request matched by both a closed and an open-generic handler) otherwise surface only on the first call that hits them. Opt into fail-fast validation so a misconfigured app dies at startup instead of in production:
