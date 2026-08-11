@@ -25,7 +25,7 @@ public class SimpleMediatorOptions
     /// and an open-generic handler) fail fast at startup instead of on the first request.
     /// Defaults to false.
     /// </summary>
-    public bool ValidateOnBuild { get; set; } = false;
+    public bool ValidateOnBuild { get; set; }
 
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
     {

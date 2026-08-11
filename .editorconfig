@@ -1,0 +1,20 @@
+root = true
+
+[*.cs]
+
+# Marker interfaces (INotification, IRequest<TResponse>) are intentional in the mediator pattern.
+dotnet_diagnostic.CA1040.severity = none
+
+# RequestHandlerDelegate: suffix intentionally mirrors the MediatR convention.
+dotnet_diagnostic.CA1711.severity = none
+
+# 'next' is the conventional parameter name for pipeline behavior delegation.
+dotnet_diagnostic.CA1716.severity = none
+
+# InvokeSafely intentionally converts any synchronous handler throw into a faulted task.
+dotnet_diagnostic.CA1031.severity = none
+
+# Optional CancellationToken parameters are an intentional, idiomatic API design
+# (mirrors MediatR); the analyzer flags them as a hypothetical overload-ambiguity risk.
+dotnet_diagnostic.RS0026.severity = none
+dotnet_diagnostic.RS0027.severity = none

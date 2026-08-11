@@ -28,7 +28,7 @@ public abstract class RequestHandler<TRequest> : IRequestHandler<TRequest, Unit>
 
     private static async Task<Unit> ContinueWithUnit(Task task)
     {
-        await task;
+        await task.ConfigureAwait(false);
         return Unit.Value;
     }
 }

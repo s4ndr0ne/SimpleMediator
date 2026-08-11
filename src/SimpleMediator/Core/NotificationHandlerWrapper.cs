@@ -35,7 +35,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
     {
         foreach (var handler in handlers)
         {
-            await handler.Handle(notification, cancellationToken);
+            await handler.Handle(notification, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -54,7 +54,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         var whenAll = Task.WhenAll(tasks);
         try
         {
-            await whenAll;
+            await whenAll.ConfigureAwait(false);
         }
         catch (Exception ex)
         {

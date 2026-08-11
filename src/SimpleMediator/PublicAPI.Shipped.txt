@@ -1,0 +1,64 @@
+#nullable enable
+abstract SimpleMediator.Interfaces.RequestHandler<TRequest>.HandleCore(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+override SimpleMediator.Interfaces.Unit.Equals(object? obj) -> bool
+override SimpleMediator.Interfaces.Unit.GetHashCode() -> int
+SimpleMediator.Core.Mediator
+SimpleMediator.Core.Mediator.Mediator(System.IServiceProvider! serviceProvider) -> void
+SimpleMediator.Core.Mediator.Publish<TNotification>(TNotification notification, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Core.Mediator.Send(SimpleMediator.Interfaces.IRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Core.Mediator.Send<TResponse>(SimpleMediator.Interfaces.IRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResponse>!
+SimpleMediator.Interfaces.IMediator
+SimpleMediator.Interfaces.IMediator.Publish<TNotification>(TNotification notification, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IMediator.Send(SimpleMediator.Interfaces.IRequest! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IMediator.Send<TResponse>(SimpleMediator.Interfaces.IRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<TResponse>!
+SimpleMediator.Interfaces.INotification
+SimpleMediator.Interfaces.INotificationHandler<TNotification>
+SimpleMediator.Interfaces.INotificationHandler<TNotification>.Handle(TNotification notification, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IOrderedPipelineBehavior
+SimpleMediator.Interfaces.IOrderedPipelineBehavior.Order.get -> int
+SimpleMediator.Interfaces.IPipelineBehavior<TRequest, TResponse>
+SimpleMediator.Interfaces.IPipelineBehavior<TRequest, TResponse>.Handle(TRequest request, SimpleMediator.Interfaces.RequestHandlerDelegate<TResponse>! next, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<TResponse>!
+SimpleMediator.Interfaces.IPostRequestHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IPostRequestHandler<TRequest, TResponse>.Handle(TRequest request, TResponse response, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IPreRequestHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IPreRequestHandler<TRequest, TResponse>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IRequest
+SimpleMediator.Interfaces.IRequest<TResponse>
+SimpleMediator.Interfaces.IRequestExceptionHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IRequestExceptionHandler<TRequest, TResponse>.Handle(TRequest request, System.Exception! exception, SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>! state, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.IRequestExceptionHandler<TRequest, TResponse>.Order.get -> int
+SimpleMediator.Interfaces.IRequestHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IRequestHandler<TRequest, TResponse>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<TResponse>!
+SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>
+SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>.Handled.get -> bool
+SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>.RequestExceptionHandlerState() -> void
+SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>.Response.get -> TResponse?
+SimpleMediator.Interfaces.RequestExceptionHandlerState<TResponse>.SetHandled(TResponse response) -> void
+SimpleMediator.Interfaces.RequestHandler<TRequest>
+SimpleMediator.Interfaces.RequestHandler<TRequest>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<SimpleMediator.Interfaces.Unit>!
+SimpleMediator.Interfaces.RequestHandler<TRequest>.RequestHandler() -> void
+SimpleMediator.Interfaces.RequestHandlerDelegate<TResponse>
+SimpleMediator.Interfaces.Unit
+SimpleMediator.Interfaces.Unit.Equals(SimpleMediator.Interfaces.Unit other) -> bool
+SimpleMediator.Interfaces.Unit.Unit() -> void
+SimpleMediator.NotificationPublishStrategy
+SimpleMediator.NotificationPublishStrategy.Parallel = 1 -> SimpleMediator.NotificationPublishStrategy
+SimpleMediator.NotificationPublishStrategy.Sequential = 0 -> SimpleMediator.NotificationPublishStrategy
+SimpleMediator.ServiceCollectionExtensions
+SimpleMediator.SimpleMediatorOptions
+SimpleMediator.SimpleMediatorOptions.AddBehavior(System.Type! behaviorType) -> SimpleMediator.SimpleMediatorOptions!
+SimpleMediator.SimpleMediatorOptions.DefaultLifetime.get -> Microsoft.Extensions.DependencyInjection.ServiceLifetime
+SimpleMediator.SimpleMediatorOptions.DefaultLifetime.set -> void
+SimpleMediator.SimpleMediatorOptions.NotificationPublishStrategy.get -> SimpleMediator.NotificationPublishStrategy
+SimpleMediator.SimpleMediatorOptions.NotificationPublishStrategy.set -> void
+SimpleMediator.SimpleMediatorOptions.RegisterAssembly(System.Reflection.Assembly! assembly) -> SimpleMediator.SimpleMediatorOptions!
+SimpleMediator.SimpleMediatorOptions.SimpleMediatorOptions() -> void
+SimpleMediator.SimpleMediatorOptions.ValidateOnBuild.get -> bool
+SimpleMediator.SimpleMediatorOptions.ValidateOnBuild.set -> void
+static readonly SimpleMediator.Interfaces.Unit.Value -> SimpleMediator.Interfaces.Unit
+static SimpleMediator.Interfaces.Unit.operator !=(SimpleMediator.Interfaces.Unit left, SimpleMediator.Interfaces.Unit right) -> bool
+static SimpleMediator.Interfaces.Unit.operator ==(SimpleMediator.Interfaces.Unit left, SimpleMediator.Interfaces.Unit right) -> bool
+static SimpleMediator.Interfaces.Unit.Task.get -> System.Threading.Tasks.Task<SimpleMediator.Interfaces.Unit>!
+static SimpleMediator.ServiceCollectionExtensions.AddSimpleMediator(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static SimpleMediator.ServiceCollectionExtensions.AddSimpleMediator(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.SimpleMediatorOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+static SimpleMediator.ServiceCollectionExtensions.ValidateSimpleMediator(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!

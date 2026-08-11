@@ -22,14 +22,14 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
         {
             foreach (var pre in preHandlers)
             {
-                await pre.Handle((TRequest)request, ct);
+                await pre.Handle((TRequest)request, ct).ConfigureAwait(false);
             }
 
-            var result = await handler.Handle((TRequest)request, ct);
+            var result = await handler.Handle((TRequest)request, ct).ConfigureAwait(false);
 
             foreach (var post in postHandlers)
             {
-                await post.Handle((TRequest)request, result, ct);
+                await post.Handle((TRequest)request, result, ct).ConfigureAwait(false);
             }
 
             return result;
@@ -42,7 +42,7 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 
         try
         {
-            return await aggregate(cancellationToken);
+            return await aggregate(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -65,7 +65,7 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 
             foreach (var exceptionHandler in exceptionHandlers)
             {
-                await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken);
+                await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
                 if (state.Handled)
                 {
                     break;

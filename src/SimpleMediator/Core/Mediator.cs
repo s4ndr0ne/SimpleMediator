@@ -19,12 +19,12 @@ public class Mediator : IMediator
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        await Send<Unit>(request, cancellationToken);
+        await Send<Unit>(request, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
-        if (request == null) throw new ArgumentNullException(nameof(request));
+        ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
 
@@ -38,12 +38,12 @@ public class Mediator : IMediator
 
         var handler = (RequestHandlerWrapper<TResponse>)factory();
 
-        return await handler.Handle(request, _serviceProvider, cancellationToken);
+        return await handler.Handle(request, _serviceProvider, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
     {
-        if (notification == null) throw new ArgumentNullException(nameof(notification));
+        ArgumentNullException.ThrowIfNull(notification);
 
         var notificationType = notification.GetType();
 
@@ -55,6 +55,6 @@ public class Mediator : IMediator
 
         var handler = (NotificationHandlerWrapper)factory();
 
-        await handler.Handle(notification, _serviceProvider, cancellationToken);
+        await handler.Handle(notification, _serviceProvider, cancellationToken).ConfigureAwait(false);
     }
 }
