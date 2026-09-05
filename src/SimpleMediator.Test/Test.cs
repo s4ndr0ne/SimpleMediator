@@ -1286,6 +1286,29 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         }
     }
 
+    [Fact]
+    public async Task Send_VoidRequest_PropagatesSynchronouslyCancelledTask()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator();
+        services.AddTransient<IRequestHandler<CancelledVoidRequest, Unit>, CancelledVoidHandler>();
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            mediator.Send(new CancelledVoidRequest(), cancellationSource.Token));
+    }
+
+    public record CancelledVoidRequest : IRequest;
+
+    public class CancelledVoidHandler : RequestHandler<CancelledVoidRequest>
+    {
+        protected override Task HandleCore(CancelledVoidRequest request, CancellationToken cancellationToken)
+            => Task.FromCanceled(cancellationToken);
+    }
+
     // ---- ValidateOnBuild surfaces open-generic behaviors that can't be closed ----
 
     [Fact]

@@ -19,7 +19,9 @@ public abstract class RequestHandler<TRequest> : IRequestHandler<TRequest, Unit>
     public Task<Unit> Handle(TRequest request, CancellationToken cancellationToken)
     {
         var task = HandleCore(request, cancellationToken);
-        return task.IsCompleted && task.Exception is null
+        // A cancelled Task is completed and has no Exception, but it must still
+        // propagate its OperationCanceledException to the caller.
+        return task.IsCompletedSuccessfully
             ? Unit.Task
             : ContinueWithUnit(task);
     }
