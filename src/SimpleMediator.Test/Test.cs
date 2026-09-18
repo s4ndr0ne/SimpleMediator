@@ -1340,4 +1340,66 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             => next(cancellationToken);
     }
 
+    [Fact]
+    public void AssemblyScan_RegistersEverySupportedInterface_OnMultiInterfaceOpenGenericHandler()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IPreRequestHandler<,>) &&
+            descriptor.ImplementationType == typeof(MultiInterfaceOpenGenericHandler<,>));
+        Assert.Contains(services, descriptor =>
+            descriptor.ServiceType == typeof(IPostRequestHandler<,>) &&
+            descriptor.ImplementationType == typeof(MultiInterfaceOpenGenericHandler<,>));
+    }
+
+    [Fact]
+    public async Task Send_AggregatesOriginalAndExceptionHandlerFailures()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<RecoverableRequest, string>, ThrowingRequestHandler>();
+        services.AddTransient<IRequestExceptionHandler<RecoverableRequest, string>, ThrowingExceptionHandler>();
+        var mediator = new Mediator(services.BuildServiceProvider());
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(() =>
+            mediator.Send<string>(new RecoverableRequest("x")));
+
+        Assert.Collection(
+            exception.InnerExceptions,
+            original => Assert.Equal("kaboom", original.Message),
+            handler => Assert.Equal("exception handler failed", handler.Message));
+    }
+
+    [Fact]
+    public void AddSimpleMediator_RejectsInvalidOptionValues()
+    {
+        var lifetimeException = Assert.Throws<ArgumentException>(() =>
+            new ServiceCollection().AddSimpleMediator(options => options.DefaultLifetime = (ServiceLifetime)99));
+        Assert.Contains("DefaultLifetime", lifetimeException.Message);
+
+        var strategyException = Assert.Throws<ArgumentException>(() =>
+            new ServiceCollection().AddSimpleMediator(options =>
+                options.NotificationPublishStrategy = (NotificationPublishStrategy)99));
+        Assert.Contains("NotificationPublishStrategy", strategyException.Message);
+    }
+
+    public class MultiInterfaceOpenGenericHandler<TRequest, TResponse> :
+        IPreRequestHandler<TRequest, TResponse>,
+        IPostRequestHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public Task Handle(TRequest request, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+
+        public Task Handle(TRequest request, TResponse response, CancellationToken cancellationToken)
+            => Task.CompletedTask;
+    }
+
+    public class ThrowingExceptionHandler : IRequestExceptionHandler<RecoverableRequest, string>
+    {
+        public Task Handle(RecoverableRequest request, Exception exception, RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("exception handler failed");
+    }
+
 }

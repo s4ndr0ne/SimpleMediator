@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions
 
         var options = new SimpleMediatorOptions();
         configure(options);
+        ValidateOptions(options);
         return AddSimpleMediatorCore(services, options);
     }
 
@@ -64,7 +65,12 @@ public static class ServiceCollectionExtensions
             }
             catch (ReflectionTypeLoadException ex)
             {
-                types = ex.Types.Where(t => t != null).ToArray()!;
+                var loaderErrors = string.Join(Environment.NewLine, ex.LoaderExceptions
+                    .Where(error => error is not null)
+                    .Select(error => $"- {error!.Message}"));
+                throw new InvalidOperationException(
+                    $"Unable to scan assembly '{assembly.FullName}'. Resolve the loader errors before registering handlers." +
+                    (loaderErrors.Length == 0 ? string.Empty : Environment.NewLine + loaderErrors), ex);
             }
 
             var candidateTypes = types
@@ -130,6 +136,21 @@ public static class ServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    private static void ValidateOptions(SimpleMediatorOptions options)
+    {
+        if (!Enum.IsDefined(options.DefaultLifetime))
+        {
+            throw new ArgumentException(
+                "DefaultLifetime must be a defined ServiceLifetime value.");
+        }
+
+        if (!Enum.IsDefined(options.NotificationPublishStrategy))
+        {
+            throw new ArgumentException(
+                "NotificationPublishStrategy must be a defined NotificationPublishStrategy value.");
+        }
     }
 
     /// <summary>
@@ -272,19 +293,23 @@ public static class ServiceCollectionExtensions
             {
                 implementsRequestHandler = true;
             }
-            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(INotificationHandler<>)))
+
+            if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(INotificationHandler<>)))
             {
                 services.TryAddEnumerable(new ServiceDescriptor(typeof(INotificationHandler<>), type, lifetime));
             }
-            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPreRequestHandler<,>)))
+
+            if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPreRequestHandler<,>)))
             {
                 services.TryAddEnumerable(new ServiceDescriptor(typeof(IPreRequestHandler<,>), type, lifetime));
             }
-            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPostRequestHandler<,>)))
+
+            if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IPostRequestHandler<,>)))
             {
                 services.TryAddEnumerable(new ServiceDescriptor(typeof(IPostRequestHandler<,>), type, lifetime));
             }
-            else if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IRequestExceptionHandler<,>)))
+
+            if (CanRegisterWithNativeOpenGenericResolution(type, @interface, typeof(IRequestExceptionHandler<,>)))
             {
                 services.TryAddEnumerable(new ServiceDescriptor(typeof(IRequestExceptionHandler<,>), type, lifetime));
             }

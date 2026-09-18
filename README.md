@@ -4,6 +4,11 @@ A lightweight, high-performance implementation of the mediator pattern in .NET, 
 SimpleMediator is designed to be fast, reliable, and "DI-friendly", following modern .NET practices like correct scope management and minimal reflection overhead.
 
 [![.NET](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml)
+[![GitHub](https://img.shields.io/badge/GitHub-s4ndr0ne%2FSimpleMediator-181717?logo=github)](https://github.com/s4ndr0ne/SimpleMediator)
+[![NuGet](https://img.shields.io/nuget/v/s4ndr0ne.SimpleMediator?logo=nuget)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator)
+[![NuGet Downloads](https://img.shields.io/nuget/dt/s4ndr0ne.SimpleMediator?logo=nuget)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator)
+[![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/8.0)
+[![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/10.0)
 
 ## Core Features & Optimizations
 
@@ -11,7 +16,7 @@ SimpleMediator is designed to be fast, reliable, and "DI-friendly", following mo
 - **🛡️ Native Scope Support**: Correctly respects the surrounding Dependency Injection scope. Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers.
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
-- **📦 Zero Dependencies**: Built strictly on top of `Microsoft.Extensions.DependencyInjection`.
+- **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
 
 ## Installation
 This library is intended to be used as a NuGet package. To install it, use the .NET CLI:
@@ -167,6 +172,8 @@ public class ValidationExceptionHandler : IRequestExceptionHandler<CreateUser, U
 
 Handlers run in **ascending `Order`** (the `IRequestExceptionHandler<,>.Order` property, default `0`); the first to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning.
 
+If an exception handler itself throws, the mediator throws an `AggregateException` containing both the original request exception and the exception-handler failure.
+
 > **Cancellation is never swallowed:** an `OperationCanceledException` is treated as control flow, not as an error — it is *never* offered to `IRequestExceptionHandler<,>` and propagates straight to the caller, regardless of whether the cancellation originated from the request's own `CancellationToken` or from a linked/alien token a behavior or handler observed. Likewise, when notification handlers run in `Parallel` and every faulted handler throws `OperationCanceledException` while the supplied token is cancelled, `Publish` surfaces the `OperationCanceledException` itself rather than an `AggregateException` wrapping it.
 
 ## Startup Validation
@@ -185,10 +192,10 @@ services.ValidateSimpleMediator();
 
 Validation flags more than one registration for the same closed `IRequestHandler<,>` (whether by type, factory, or instance) and any request matched by both a closed and an open-generic handler.
 
-> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and open-generic handlers are merged across calls. `NotificationPublishStrategy` and `ValidateOnBuild` follow a **last-call-wins** rule, so set them consistently (or only once) if you split registration across modules.
+> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and open-generic handlers are merged across calls. `NotificationPublishStrategy` is last-call-wins. Each call's `ValidateOnBuild` setting validates the cumulative registrations at that point; it is not a persistent global setting.
 
 ## Observability
-SimpleMediator keeps the core dependency-free; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:
+SimpleMediator keeps the core limited to the DI abstractions dependency; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:
 
 ```csharp
 public class TracingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>

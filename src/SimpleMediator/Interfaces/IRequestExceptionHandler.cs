@@ -23,7 +23,7 @@ public sealed class RequestExceptionHandlerState<TResponse>
 
 /// <summary>
 /// Handles exceptions thrown while processing a request (by the handler, its pre/post
-/// handlers, or any pipeline behavior). Registered handlers run in registration order;
+/// handlers, or any pipeline behavior). Registered handlers run in ascending Order;
 /// the first one to call <see cref="RequestExceptionHandlerState{TResponse}.SetHandled"/>
 /// short-circuits the rest and the exception is swallowed. If none handles it, the
 /// original exception is rethrown with its stack trace intact.

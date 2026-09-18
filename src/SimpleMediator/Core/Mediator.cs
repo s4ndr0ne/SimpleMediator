@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Linq.Expressions;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
@@ -8,8 +7,8 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private static readonly ConcurrentDictionary<(Type Request, Type Response), Func<object>> _requestHandlerFactories = new();
-    private static readonly ConcurrentDictionary<Type, Func<object>> _notificationHandlerFactories = new();
+    private static readonly BoundedFactoryCache<(Type Request, Type Response), Func<object>> _requestHandlerFactories = new(1024);
+    private static readonly BoundedFactoryCache<Type, Func<object>> _notificationHandlerFactories = new(1024);
 
     public Mediator(IServiceProvider serviceProvider)
     {

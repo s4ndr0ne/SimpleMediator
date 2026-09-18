@@ -65,7 +65,18 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 
             foreach (var exceptionHandler in exceptionHandlers)
             {
-                await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception handlerException)
+                {
+                    throw new AggregateException(
+                        "A request exception handler failed while handling the original request exception.",
+                        exception,
+                        handlerException);
+                }
+
                 if (state.Handled)
                 {
                     break;
