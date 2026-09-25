@@ -17,6 +17,21 @@ internal static class OpenGenericRegistrationRules
         typeof(IRequestExceptionHandler<,>)
     ];
 
+    internal static bool IsSupportedOpenGenericService(Type serviceTypeDefinition)
+        => serviceTypeDefinition == typeof(IRequestHandler<,>)
+           || serviceTypeDefinition == typeof(INotificationHandler<>)
+           || serviceTypeDefinition == typeof(IPreRequestHandler<,>)
+           || serviceTypeDefinition == typeof(IPostRequestHandler<,>)
+           || serviceTypeDefinition == typeof(IRequestExceptionHandler<,>)
+           || serviceTypeDefinition == typeof(IPipelineBehavior<,>);
+
+    internal static Type? FindImplementedInterface(Type implementationType, Type serviceTypeDefinition)
+        => implementationType
+            .GetInterfaces()
+            .FirstOrDefault(implementedInterface =>
+                implementedInterface.IsGenericType &&
+                implementedInterface.GetGenericTypeDefinition() == serviceTypeDefinition);
+
     internal static bool CanRegisterWithNativeResolution(
         Type implementationType,
         Type implementedInterface,

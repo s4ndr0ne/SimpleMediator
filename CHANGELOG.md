@@ -15,6 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The default language version is now SDK-controlled (`LangVersion=default`) for reproducible framework-aligned compilation.
 - Native AOT and trimming are explicitly out of scope; classic JIT execution is the supported deployment model.
 - Documentation now explicitly distinguishes assembly-scanned handlers from pipeline behaviors, which must be registered with `AddBehavior`, and documents the required request/operation scope for long-running applications.
+- Parallel notification dispatch now rethrows the original exception for a single failed handler and reserves `AggregateException` for multiple failures.
+- Once `ValidateOnBuild` is enabled or validation is requested explicitly, subsequent modular `AddSimpleMediator` calls keep validating the accumulated registration set.
+- Assembly scanning now uses a stable type-name order so module composition does not depend on reflection enumeration order.
 
 ### Added
 - .NET analyzers (all rules, warnings as errors) and public API analyzers to enforce API surface stability.
@@ -27,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Removed the package build props file so installing SimpleMediator does not add a transitive global using to consumer projects.
 - Faulted cache factory entries are evicted, allowing a later resolution attempt to retry after a transient failure.
 - Reworked bounded cache eviction bookkeeping so failed factory entries cannot accumulate stale keys or evict live replacements.
+- Open-generic handler mappings and concrete handler/behavior implementations now fail structural validation during registration when they cannot be activated by Microsoft DI, including scanned open-generic request handlers without a public constructor.
 
 ## [3.1.0] - 2026-07-21
 

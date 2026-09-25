@@ -59,28 +59,39 @@ public static class ServiceCollectionExtensions
         services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
 
         var openGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        MergeConfiguration(services, options, openGenericRequestHandlers);
+        var configuration = MergeConfiguration(services, options, openGenericRequestHandlers);
 
         RegisterBehaviors(services, options);
 
-        if (options.ValidateOnBuild)
+        if (configuration.ValidationRequested)
         {
             services.ValidateSimpleMediator();
+        }
+        else
+        {
+            MediatorRegistrationValidator.ValidateRegistrationShape(services);
         }
 
         return services;
     }
 
     /// <summary>
-    /// Validates configuration conflicts for closed request-handler registrations present
-    /// in the service collection. It cannot validate request types without a closed handler
-    /// registration. Returns the same collection for chaining.
+    /// Validates structural open-generic/concrete registrations and configuration conflicts
+    /// for closed request-handler registrations present in the service collection. It cannot
+    /// validate request types without a closed handler registration. Returns the same
+    /// collection for chaining.
     /// </summary>
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection ValidateSimpleMediator(this IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
         MediatorRegistrationValidator.Validate(services);
+
+        var configuration = services
+            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(MediatorConfiguration))?
+            .ImplementationInstance as MediatorConfiguration;
+        configuration?.RequestValidation();
+
         return services;
     }
 
@@ -124,7 +135,7 @@ public static class ServiceCollectionExtensions
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.OpenGenericResolutionCacheCapacity);
     }
 
-    private static void MergeConfiguration(
+    private static MediatorConfiguration MergeConfiguration(
         IServiceCollection services,
         SimpleMediatorOptions options,
         List<Type> openGenericRequestHandlers)
@@ -146,14 +157,24 @@ public static class ServiceCollectionExtensions
                 .Distinct()
                 .ToList();
 
+            var validationRequested = existing.ValidationRequested || options.ValidateOnBuild;
+            var configuration = new MediatorConfiguration(
+                strategy,
+                mergedHandlers,
+                capacity,
+                validationRequested);
+
             services.Remove(existingDescriptor);
-            services.AddSingleton(new MediatorConfiguration(strategy, mergedHandlers, capacity));
-            return;
+            services.AddSingleton(configuration);
+            return configuration;
         }
 
-        services.AddSingleton(new MediatorConfiguration(
+        var initialConfiguration = new MediatorConfiguration(
             options.NotificationPublishStrategy,
             openGenericRequestHandlers,
-            options.OpenGenericResolutionCacheCapacity));
+            options.OpenGenericResolutionCacheCapacity,
+            options.ValidateOnBuild);
+        services.AddSingleton(initialConfiguration);
+        return initialConfiguration;
     }
 }

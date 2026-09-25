@@ -57,8 +57,8 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
             var singleTask = InvokeSafely(handlerArray[0], notification, cancellationToken);
             if (singleTask.IsCompletedSuccessfully) return;
 
-            // Keep the existing exception/aggregation semantics for the uncommon faulted
-            // single-handler path, while avoiding Task.WhenAll allocation on the hot success path.
+            // Avoid Task.WhenAll allocation on the hot success path. Faulted single-handler
+            // requests are normalized below to the original exception.
             tasks = new[] { singleTask };
         }
         else
@@ -92,6 +92,13 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
 
             if (aggregate is not null)
             {
+                // Preserve the original exception for a single failed handler, matching
+                // sequential dispatch. Aggregate only when more than one handler failed.
+                if (aggregate.InnerExceptions.Count == 1)
+                {
+                    ExceptionDispatchInfo.Capture(aggregate.InnerExceptions[0]).Throw();
+                }
+
                 throw aggregate;
             }
 

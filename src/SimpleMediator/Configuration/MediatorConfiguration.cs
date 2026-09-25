@@ -13,6 +13,7 @@ internal sealed class MediatorConfiguration
 
     public NotificationPublishStrategy NotificationPublishStrategy { get; }
     public int ResolutionCacheCapacity { get; }
+    public bool ValidationRequested { get; private set; }
 
     /// <summary>
     /// Open-generic request-handler implementation types discovered by assembly scanning
@@ -30,16 +31,20 @@ internal sealed class MediatorConfiguration
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
         IReadOnlyList<Type>? openGenericRequestHandlers = null,
-        int resolutionCacheCapacity = 1024)
+        int resolutionCacheCapacity = 1024,
+        bool validationRequested = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
         ResolutionCacheCapacity = resolutionCacheCapacity;
+        ValidationRequested = validationRequested;
         OpenGenericRequestHandlers = openGenericRequestHandlers ?? NoTypes;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
         RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
         NotificationHandlerWrappers = new BoundedFactoryCache<Type, object>(1024);
     }
+
+    internal void RequestValidation() => ValidationRequested = true;
 
     /// <summary>
     /// Returns the cached set of open-generic handlers that match the given request/response

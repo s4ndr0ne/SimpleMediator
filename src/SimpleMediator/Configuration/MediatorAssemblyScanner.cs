@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SimpleMediator.Core;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator;
@@ -37,7 +38,9 @@ internal static class MediatorAssemblyScanner
                     (loaderErrors.Length == 0 ? string.Empty : Environment.NewLine + loaderErrors), ex);
             }
 
-            foreach (var type in types.Where(type => !type.IsAbstract && !type.IsInterface))
+            foreach (var type in types
+                         .Where(type => !type.IsAbstract && !type.IsInterface)
+                         .OrderBy(type => type.FullName, StringComparer.Ordinal))
             {
                 if (type.IsGenericTypeDefinition)
                 {
@@ -91,9 +94,19 @@ internal static class MediatorAssemblyScanner
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IRequestExceptionHandler<,>), lifetime);
         }
 
-        if (implementsRequestHandler && !openGenericRequestHandlers.Contains(type))
+        if (implementsRequestHandler)
         {
-            openGenericRequestHandlers.Add(type);
+            if (!OpenGenericMatcher.CanInferOpenGenericRequestHandler(type))
+            {
+                throw new InvalidOperationException(
+                    $"Open-generic request handler '{type.FullName}' has a request/response mapping that cannot be inferred. " +
+                    "Every implementation type parameter must appear in the request or response pattern, or the handler must be registered as a closed type.");
+            }
+
+            if (!openGenericRequestHandlers.Contains(type))
+            {
+                openGenericRequestHandlers.Add(type);
+            }
         }
     }
 
@@ -104,10 +117,20 @@ internal static class MediatorAssemblyScanner
         Type serviceTypeDefinition,
         ServiceLifetime lifetime)
     {
-        if (OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+        if (!implementedInterface.IsGenericType ||
+            implementedInterface.GetGenericTypeDefinition() != serviceTypeDefinition)
+        {
+            return;
+        }
+
+        if (!OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
                 implementationType, implementedInterface, serviceTypeDefinition))
         {
-            services.TryAddEnumerable(new ServiceDescriptor(serviceTypeDefinition, implementationType, lifetime));
+            throw new InvalidOperationException(
+                $"Open-generic handler '{implementationType.FullName}' implements '{implementedInterface}' but cannot be closed by Microsoft DI. " +
+                "The implementation type parameters must line up 1:1 with the service interface, or the handler must be registered as a closed type.");
         }
+
+        services.TryAddEnumerable(new ServiceDescriptor(serviceTypeDefinition, implementationType, lifetime));
     }
 }

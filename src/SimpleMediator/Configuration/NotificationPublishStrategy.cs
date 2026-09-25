@@ -18,8 +18,9 @@ public enum NotificationPublishStrategy
     /// Handlers run concurrently via <see cref="System.Threading.Tasks.Task.WhenAll(System.Threading.Tasks.Task[])"/>.
     /// Faster for independent, CPU/IO-bound handlers, but every handler shares the
     /// same <see cref="System.IServiceProvider"/>: do NOT enable this when handlers
-    /// touch a shared non-thread-safe scoped service. If multiple handlers throw,
-    /// an <see cref="System.AggregateException"/> with all failures is surfaced.
+    /// touch a shared non-thread-safe scoped service. If one handler throws, its original
+    /// exception is surfaced; if multiple handlers throw, an
+    /// <see cref="System.AggregateException"/> with all failures is surfaced.
     /// </summary>
     Parallel = 1
 }

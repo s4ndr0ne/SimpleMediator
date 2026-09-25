@@ -79,6 +79,80 @@ internal static class OpenGenericMatcher
     }
 
     /// <summary>
+    /// Validates that an open-generic request handler exposes enough information in its
+    /// request/response interface pattern for <see cref="TryClose"/> to infer every
+    /// implementation type parameter. Unsupported mappings are rejected during registration
+    /// instead of being silently ignored.
+    /// </summary>
+    internal static bool CanInferOpenGenericRequestHandler(Type openImplementation)
+    {
+        var requestInterfaces = openImplementation
+            .GetInterfaces()
+            .Where(interfaceType =>
+                interfaceType.IsGenericType &&
+                interfaceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>))
+            .ToArray();
+
+        if (requestInterfaces.Length == 0)
+        {
+            return false;
+        }
+
+        var implementationParameters = openImplementation.GetGenericArguments();
+        foreach (var requestInterface in requestInterfaces)
+        {
+            var patternParameters = new HashSet<Type>();
+            var requestPattern = requestInterface.GetGenericArguments()[0];
+            var responsePattern = requestInterface.GetGenericArguments()[1];
+
+            if (!TryCollectGenericParameters(requestPattern, patternParameters) ||
+                !TryCollectGenericParameters(responsePattern, patternParameters))
+            {
+                return false;
+            }
+
+            if (implementationParameters.Any(parameter => !patternParameters.Contains(parameter)))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryCollectGenericParameters(Type pattern, ISet<Type> parameters)
+    {
+        if (pattern.IsGenericParameter)
+        {
+            parameters.Add(pattern);
+            return true;
+        }
+
+        if (pattern.IsByRef || pattern.IsPointer)
+        {
+            return !pattern.ContainsGenericParameters;
+        }
+
+        if (pattern.IsArray)
+        {
+            return TryCollectGenericParameters(pattern.GetElementType()!, parameters);
+        }
+
+        if (pattern.IsGenericType)
+        {
+            foreach (var argument in pattern.GetGenericArguments())
+            {
+                if (!TryCollectGenericParameters(argument, parameters))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Structurally unifies an interface-argument <paramref name="pattern"/> (which may
     /// contain the implementation's generic parameters) against a fully-closed
     /// <paramref name="concrete"/> type, recording each generic-parameter binding.

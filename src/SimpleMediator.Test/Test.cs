@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Reflection.Emit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator;
@@ -669,6 +671,62 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
+    public async Task Publish_Parallel_PreservesSingleHandlerException()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+        });
+        services.AddTransient<INotificationHandler<SingleFailureNotification>, SingleFailureHandler>();
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mediator.Publish(new SingleFailureNotification()));
+
+        Assert.Equal("single failure", exception.Message);
+    }
+
+    [Fact]
+    public async Task Publish_Parallel_PreservesSingleNullTaskException()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+        });
+        services.AddTransient<INotificationHandler<NullTaskNotification>, NullTaskHandler>();
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mediator.Publish(new NullTaskNotification()));
+
+        Assert.Contains("returned a null Task", exception.Message);
+    }
+
+    [Fact]
+    public async Task Publish_Parallel_AggregatesCancellationAndFailure()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+        });
+        services.AddTransient<INotificationHandler<MixedFailureNotification>, MixedCancellationHandler>();
+        services.AddTransient<INotificationHandler<MixedFailureNotification>, MixedErrorHandler>();
+        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(
+            () => mediator.Publish(new MixedFailureNotification(), cancellation.Token));
+
+        Assert.Equal(2, exception.InnerExceptions.Count);
+        Assert.Contains(exception.InnerExceptions, error => error is OperationCanceledException);
+        Assert.Contains(exception.InnerExceptions, error => error is InvalidOperationException);
+    }
+
+    [Fact]
     public async Task Publish_Sequential_StopsAfterFirstException()
     {
         // Arrange - manual registration so dispatch order is deterministic
@@ -771,6 +829,36 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     {
         public Task Handle(FailingNotification notification, CancellationToken cancellationToken)
             => throw new InvalidOperationException("second failed");
+    }
+
+    public record SingleFailureNotification() : INotification;
+
+    public class SingleFailureHandler : INotificationHandler<SingleFailureNotification>
+    {
+        public Task Handle(SingleFailureNotification notification, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("single failure");
+    }
+
+    public record NullTaskNotification() : INotification;
+
+    public class NullTaskHandler : INotificationHandler<NullTaskNotification>
+    {
+        public Task Handle(NullTaskNotification notification, CancellationToken cancellationToken)
+            => null!;
+    }
+
+    public record MixedFailureNotification() : INotification;
+
+    public class MixedCancellationHandler : INotificationHandler<MixedFailureNotification>
+    {
+        public Task Handle(MixedFailureNotification notification, CancellationToken cancellationToken)
+            => Task.FromException(new OperationCanceledException());
+    }
+
+    public class MixedErrorHandler : INotificationHandler<MixedFailureNotification>
+    {
+        public Task Handle(MixedFailureNotification notification, CancellationToken cancellationToken)
+            => Task.FromException(new InvalidOperationException("mixed failure"));
     }
 
     public record FailFastNotification() : INotification;
@@ -1096,6 +1184,78 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
 
+    [Fact]
+    public void ValidateSimpleMediator_RejectsOpenGenericServiceMapping()
+    {
+        var services = new ServiceCollection();
+
+        // OpenGenericPreHandler<,> implements the pre-handler contract, not the notification
+        // contract, so Microsoft DI cannot close it for INotificationHandler<>.
+        services.AddTransient(typeof(INotificationHandler<>), typeof(OpenGenericPreHandler<,>));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("does not implement", ex.Message);
+    }
+
+    [Fact]
+    public void AddSimpleMediator_RejectsOpenGenericServiceMappingWithoutOptIn()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient(typeof(INotificationHandler<>), typeof(OpenGenericPreHandler<,>));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+
+        Assert.Contains("does not implement", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateSimpleMediator_RejectsMismatchedClosedImplementation()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient(
+            typeof(IRequestHandler<PrePostRequest, string>),
+            typeof(SamplePreHandler));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("does not implement service", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateSimpleMediator_RejectsUninferableOpenGenericRequestHandler()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new MediatorConfiguration(
+            NotificationPublishStrategy.Sequential,
+            new[] { typeof(OpenGenericPreHandler<,>) }));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        Assert.Contains("cannot be inferred", ex.Message);
+    }
+
+    [Fact]
+    public void AddSimpleMediator_RejectsOpenGenericRequestHandlerWithoutPublicConstructor()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new MediatorConfiguration(
+            NotificationPublishStrategy.Sequential,
+            new[] { CreatePrivateConstructorOpenGenericHandler() }));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+
+        Assert.Contains("must expose a public constructor", ex.Message);
+    }
+
+    [Fact]
+    public void AddBehavior_RejectsAbstractBehaviorImmediately()
+    {
+        var services = new ServiceCollection();
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            services.AddSimpleMediator(options => options.AddBehavior(typeof(AbstractBehavior<,>))));
+
+        Assert.Contains("must be a concrete", ex.Message);
+    }
+
     // ---- Modular registration: repeated AddSimpleMediator calls ----
 
     [Fact]
@@ -1113,6 +1273,33 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
 
         var result = await mediator.Send<int>(new EchoRequest<int>(99));
         Assert.Equal(99, result);
+    }
+
+    [Fact]
+    public void ValidationRequested_PersistsAcrossModularRegistrations()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.ValidateOnBuild = true);
+        services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
+        services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+
+        Assert.Contains("Multiple request handlers registered", ex.Message);
+    }
+
+    [Fact]
+    public void ExplicitValidation_PersistsAcrossModularRegistrations()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator();
+        services.ValidateSimpleMediator();
+        services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
+        services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+
+        Assert.Contains("Multiple request handlers registered", ex.Message);
     }
 
     // ---- Open-generic handler with an array response ----
@@ -1204,6 +1391,44 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         }
     }
 
+    private static Type CreatePrivateConstructorOpenGenericHandler()
+    {
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName($"PrivateConstructorHandler_{Guid.NewGuid():N}"),
+            AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("Handlers");
+        var typeBuilder = module.DefineType(
+            "PrivateConstructorOpenGenericHandler",
+            TypeAttributes.Public | TypeAttributes.Class);
+        var typeParameter = typeBuilder.DefineGenericParameters("T")[0];
+        var requestType = typeof(PrivateConstructorRequest<>).MakeGenericType(typeParameter);
+        var handlerInterface = typeof(IRequestHandler<,>).MakeGenericType(requestType, typeParameter);
+        typeBuilder.AddInterfaceImplementation(handlerInterface);
+
+        var constructor = typeBuilder.DefineConstructor(
+            MethodAttributes.Private,
+            CallingConventions.Standard,
+            Type.EmptyTypes);
+        constructor.GetILGenerator().Emit(OpCodes.Ret);
+
+        var interfaceMethod = typeof(IRequestHandler<,>).GetMethod("Handle")!;
+        var implementationMethod = typeBuilder.DefineMethod(
+            interfaceMethod.Name,
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final |
+            MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            typeof(Task<>).MakeGenericType(typeParameter),
+            new[] { requestType, typeof(CancellationToken) });
+        implementationMethod.GetILGenerator().Emit(OpCodes.Ldnull);
+        implementationMethod.GetILGenerator().Emit(OpCodes.Ret);
+        typeBuilder.DefineMethodOverride(
+            implementationMethod,
+            TypeBuilder.GetMethod(handlerInterface, interfaceMethod));
+
+        return typeBuilder.CreateType()!;
+    }
+
+    public sealed record PrivateConstructorRequest<T>() : IRequest<T>;
+
     public class OpenGenericPostHandler<TRequest, TResponse> : IPostRequestHandler<TRequest, TResponse>
         where TRequest : IRequest<TResponse>
     {
@@ -1278,7 +1503,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
-    public async Task Publish_Parallel_DoesNotTreatUncancelledOperationCanceledExceptionAsCancellation()
+    public async Task Publish_Parallel_PropagatesUncancelledOperationCanceledException()
     {
         var services = new ServiceCollection();
         services.AddSimpleMediator(options =>
@@ -1289,11 +1514,10 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         using var provider = services.BuildServiceProvider();
         var mediator = provider.GetRequiredService<IMediator>();
 
-        var exception = await Assert.ThrowsAsync<AggregateException>(() =>
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
             mediator.Publish(new ParallelUncancelledNotification()));
 
-        Assert.Single(exception.InnerExceptions);
-        Assert.IsType<OperationCanceledException>(exception.InnerExceptions[0]);
+        Assert.IsType<OperationCanceledException>(exception);
     }
 
     public record ParallelCancellationNotification() : INotification;
@@ -1453,21 +1677,17 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             => Task.FromCanceled(cancellationToken);
     }
 
-    // ---- ValidateOnBuild surfaces open-generic behaviors that can't be closed ----
+    // ---- AddBehavior rejects open-generic behaviors that can't be closed ----
 
     [Fact]
-    public void ValidateSimpleMediator_Throws_WhenOpenGenericBehaviorCannotBeClosedByDI()
+    public void AddBehavior_RejectsMisalignedOpenGenericBehaviorImmediately()
     {
-        // Arrange - a behavior whose type parameters do not line up 1:1 with
-        // IPipelineBehavior<TRequest, TResponse> cannot be closed by Microsoft DI. It
-        // should fail validation rather than surface at the first request.
-        // Act + Assert - ValidateOnBuild runs synchronously inside AddSimpleMediator.
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        // A behavior whose type parameters do not line up 1:1 with
+        // IPipelineBehavior<TRequest, TResponse> cannot be closed by Microsoft DI.
+        var ex = Assert.Throws<ArgumentException>(() =>
             new ServiceCollection().AddSimpleMediator(options =>
-            {
-                options.AddBehavior(typeof(MisalignedBehavior<,>));
-                options.ValidateOnBuild = true;
-            }));
+                options.AddBehavior(typeof(MisalignedBehavior<,>))));
+
         Assert.Contains("cannot be closed", ex.Message);
     }
 
@@ -1484,6 +1704,17 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             => next(cancellationToken);
     }
 
+    public abstract class AbstractBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public int Order => 0;
+
+        public abstract Task<TResponse> Handle(
+            TRequest request,
+            RequestHandlerDelegate<TResponse> next,
+            CancellationToken cancellationToken);
+    }
+
     [Fact]
     public void AssemblyScan_RegistersEverySupportedInterface_OnMultiInterfaceOpenGenericHandler()
     {
@@ -1496,6 +1727,22 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         Assert.Contains(services, descriptor =>
             descriptor.ServiceType == typeof(IPostRequestHandler<,>) &&
             descriptor.ImplementationType == typeof(MultiInterfaceOpenGenericHandler<,>));
+    }
+
+    [Fact]
+    public void AssemblyScan_UsesStableTypeNameOrder()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+
+        var handlers = services
+            .Where(descriptor => descriptor.ServiceType == typeof(INotificationHandler<TestNotification>))
+            .Select(descriptor => descriptor.ImplementationType)
+            .ToArray();
+
+        Assert.Equal(
+            new[] { typeof(FirstNotificationHandler), typeof(SecondNotificationHandler) },
+            handlers);
     }
 
     [Fact]

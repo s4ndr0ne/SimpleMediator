@@ -43,9 +43,11 @@ public class SimpleMediatorOptions
     /// <summary>
     /// When true, <c>AddSimpleMediator</c> runs <c>ValidateSimpleMediator</c> immediately so
     /// configuration errors for known closed request registrations (duplicate request
-    /// handlers, or a closed handler also matched by an open-generic handler) fail fast at
-    /// registration time instead of on the first request. It cannot validate request types
-    /// that have no closed handler registration. Defaults to false.
+    /// handlers, invalid open-generic mappings, or a closed handler also matched by an
+    /// open-generic handler) fail fast at registration time instead of on the first request.
+    /// Once enabled for a service collection, subsequent modular <c>AddSimpleMediator</c>
+    /// calls keep validation enabled. It cannot validate request types that have no closed
+    /// handler registration. Defaults to false.
     /// </summary>
     public bool ValidateOnBuild { get; set; }
 
@@ -100,6 +102,33 @@ public class SimpleMediatorOptions
                 "Register either an open generic type (e.g. typeof(MyBehavior<,>)) or a closed type " +
                 "implementing IPipelineBehavior<TRequest, TResponse>.",
                 nameof(behaviorType));
+        }
+
+        if (behaviorType.IsAbstract || behaviorType.IsInterface ||
+            (behaviorType.ContainsGenericParameters && !behaviorType.IsGenericTypeDefinition))
+        {
+            throw new ArgumentException(
+                $"Behavior type '{behaviorType.FullName}' must be a concrete, fully closed type or an open generic type definition.",
+                nameof(behaviorType));
+        }
+
+        if (behaviorType.IsGenericTypeDefinition)
+        {
+            var pipelineInterface = OpenGenericRegistrationRules.FindImplementedInterface(
+                behaviorType,
+                typeof(IPipelineBehavior<,>));
+
+            if (pipelineInterface is null ||
+                !OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+                    behaviorType,
+                    pipelineInterface,
+                    typeof(IPipelineBehavior<,>)))
+            {
+                throw new ArgumentException(
+                    $"Open-generic behavior '{behaviorType.FullName}' cannot be closed by Microsoft DI: " +
+                    "its type parameters must line up 1:1 with IPipelineBehavior<TRequest, TResponse>.",
+                    nameof(behaviorType));
+            }
         }
 
         if (!Behaviors.Contains(behaviorType))
