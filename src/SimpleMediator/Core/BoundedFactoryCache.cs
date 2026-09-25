@@ -18,22 +18,38 @@ internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
     {
         ArgumentNullException.ThrowIfNull(factory);
 
+        // Do not run reflection/expression compilation while holding the global lock.
+        // A concurrent miss may build the same value, but only one value is retained.
+        if (TryGet(key, out var existing))
+        {
+            return existing;
+        }
+
+        var created = factory(key);
+
         lock (_gate)
         {
-            if (_entries.TryGetValue(key, out var existing))
+            if (_entries.TryGetValue(key, out var retained))
             {
-                return existing;
+                return retained;
             }
 
-            var value = factory(key);
             if (_entries.Count >= _capacity)
             {
                 _entries.Remove(_order.Dequeue());
             }
 
-            _entries.Add(key, value);
+            _entries.Add(key, created);
             _order.Enqueue(key);
-            return value;
+            return created;
+        }
+    }
+
+    private bool TryGet(TKey key, out TValue value)
+    {
+        lock (_gate)
+        {
+            return _entries.TryGetValue(key, out value!);
         }
     }
 }

@@ -38,10 +38,22 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
                 return result;
             };
 
-            // Build the behavior chain: lowest Order is outermost (runs first).
-            var aggregate = behaviors
-                .OrderByDescending(b => b.Order)
-                .Aggregate(handlerDelegate, (next, behavior) => ct => behavior.Handle((TRequest)request, next, ct));
+            // Build the behavior chain: lowest Order is outermost (runs first). Cache only
+            // the order of the registrations, never the behavior instances (which may be scoped).
+            var behaviorList = behaviors as IReadOnlyList<IPipelineBehavior<TRequest, TResponse>>
+                               ?? behaviors.ToArray();
+            var configuration = serviceProvider.GetService<MediatorConfiguration>();
+            var behaviorOrder = configuration?.GetBehaviorOrder(
+                typeof(TRequest), typeof(TResponse), behaviorList, static behavior => behavior.Order)
+                ?? BuildBehaviorOrder(behaviorList);
+
+            var aggregate = handlerDelegate;
+            for (var index = 0; index < behaviorOrder.Length; index++)
+            {
+                var behavior = behaviorList[behaviorOrder[index]];
+                var next = aggregate;
+                aggregate = ct => behavior.Handle((TRequest)request, next, ct);
+            }
 
             try
             {
@@ -57,11 +69,15 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
                 // Exception handlers wrap the whole pipeline and run in ascending Order.
                 var exceptionHandlers = serviceProvider
                     .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
-                    .OrderBy(h => h.Order);
+                    .ToArray();
+                var exceptionHandlerOrder = configuration?.GetExceptionHandlerOrder(
+                    typeof(TRequest), typeof(TResponse), exceptionHandlers, static handler => handler.Order)
+                    ?? BuildExceptionHandlerOrder(exceptionHandlers);
                 var state = new RequestExceptionHandlerState<TResponse>();
 
-                foreach (var exceptionHandler in exceptionHandlers)
+                foreach (var index in exceptionHandlerOrder)
                 {
+                    var exceptionHandler = exceptionHandlers[index];
                     try
                     {
                         await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
@@ -94,6 +110,20 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
             // handlers are activated manually and are owned by this request.
             await handlerLease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    private static int[] BuildBehaviorOrder(IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
+    {
+        var indexes = Enumerable.Range(0, behaviors.Count).ToArray();
+        Array.Sort(indexes, (left, right) => behaviors[right].Order.CompareTo(behaviors[left].Order));
+        return indexes;
+    }
+
+    private static int[] BuildExceptionHandlerOrder(IRequestExceptionHandler<TRequest, TResponse>[] handlers)
+    {
+        var indexes = Enumerable.Range(0, handlers.Length).ToArray();
+        Array.Sort(indexes, (left, right) => handlers[left].Order.CompareTo(handlers[right].Order));
+        return indexes;
     }
 
     // Resolves the single handler for this request, enforcing the one-handler rule across

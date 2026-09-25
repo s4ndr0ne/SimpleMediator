@@ -48,8 +48,27 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         // handler doing `=> throw`) must not abort the loop and prevent the other
         // handlers from running. Turn any synchronous throw into a faulted task so
         // every handler is started and every failure is aggregated below.
-        var tasks = handlers.Select(h => InvokeSafely(h, notification, cancellationToken)).ToArray();
-        if (tasks.Length == 0) return;
+        var handlerArray = handlers as INotificationHandler<TNotification>[] ?? handlers.ToArray();
+        if (handlerArray.Length == 0) return;
+
+        Task[] tasks;
+        if (handlerArray.Length == 1)
+        {
+            var singleTask = InvokeSafely(handlerArray[0], notification, cancellationToken);
+            if (singleTask.IsCompletedSuccessfully) return;
+
+            // Keep the existing exception/aggregation semantics for the uncommon faulted
+            // single-handler path, while avoiding Task.WhenAll allocation on the hot success path.
+            tasks = new[] { singleTask };
+        }
+        else
+        {
+            tasks = new Task[handlerArray.Length];
+            for (var index = 0; index < handlerArray.Length; index++)
+            {
+                tasks[index] = InvokeSafely(handlerArray[index], notification, cancellationToken);
+            }
+        }
 
         var whenAll = Task.WhenAll(tasks);
         try

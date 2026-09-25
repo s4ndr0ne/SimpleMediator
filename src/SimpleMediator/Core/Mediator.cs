@@ -7,14 +7,19 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    // Wrappers are stateless: cache the instances themselves instead of a factory that
-    // creates a new wrapper for every request/notification.
-    private static readonly BoundedFactoryCache<(Type Request, Type Response), object> _requestHandlerWrappers = new(1024);
-    private static readonly BoundedFactoryCache<Type, object> _notificationHandlerWrappers = new(1024);
+    // Wrapper caches belong to the DI configuration. This avoids a process-wide static cache
+    // retaining types from collectible plugin AssemblyLoadContexts.
+    private readonly BoundedFactoryCache<(Type Request, Type Response), object> _requestHandlerWrappers;
+    private readonly BoundedFactoryCache<Type, object> _notificationHandlerWrappers;
 
     public Mediator(IServiceProvider serviceProvider)
     {
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+        var configuration = serviceProvider.GetService<MediatorConfiguration>();
+        _requestHandlerWrappers = configuration?.RequestHandlerWrappers
+            ?? new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
+        _notificationHandlerWrappers = configuration?.NotificationHandlerWrappers
+            ?? new BoundedFactoryCache<Type, object>(1024);
     }
 
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
