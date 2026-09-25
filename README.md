@@ -13,7 +13,7 @@ SimpleMediator is designed to be fast, reliable, and "DI-friendly", following mo
 ## Core Features & Optimizations
 
 - **🚀 High Performance Dispatch**: Uses cached **Compiled Expression Trees** (MSIL) for mediator wrapper dispatch, while handler instances are still resolved correctly through Microsoft Dependency Injection.
-- **🛡️ Native Scope Support**: Correctly respects the surrounding Dependency Injection scope. Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers.
+- **🛡️ Native Scope Support**: Correctly respects the surrounding Dependency Injection scope for DI-registered services. Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers.
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
@@ -31,6 +31,7 @@ Register SimpleMediator in your `Program.cs` or `Startup.cs`.
 
 ```csharp
 using SimpleMediator;
+using SimpleMediator.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 
 var services = new ServiceCollection();
@@ -247,13 +248,15 @@ dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks 
 The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
-SimpleMediator relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`. It targets classic (JIT) hosts such as ASP.NET Core and is **not currently Native-AOT or trimming-safe** — `AddSimpleMediator` is annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, so trim/AOT builds will surface warnings. Do not enable `PublishTrimmed`/`PublishAot` for apps that use it without your own verification.
+SimpleMediator relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`. It targets classic (JIT) hosts such as ASP.NET Core and is **not currently Native-AOT or trimming-safe**. `AddSimpleMediator`, `IMediator`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, so unsupported trim/AOT usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed`/`PublishAot` without your own verification.
+
+The package does not inject transitive global usings into consumer projects. Add `using SimpleMediator.Interfaces;` explicitly, or enable the namespace in the consuming project if desired.
 
 ## Why SimpleMediator?
 
 SimpleMediator uses a **hybrid approach**:
 1. **Discovery**: Reflection is used once at startup to find handlers.
-2. **Compilation**: The first time a request or notification type is used, an **Expression Tree** is compiled into a cached wrapper factory.
+2. **Compilation**: The first time a request or notification type is used, an **Expression Tree** is compiled into a cached wrapper factory. Concurrent first use is coalesced so only one factory is compiled per cache key.
 3. **Execution**: Subsequent calls reuse the cached wrapper factory, while actual handlers and pipeline services are resolved through Microsoft Dependency Injection so lifetimes and scopes remain correct.
 
 ## License

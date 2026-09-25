@@ -8,6 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - .NET analyzers (all rules, warnings as errors) and public API analyzers to enforce API surface stability.
+- Public AOT/trimming annotations on every mediator dispatch entry point, so unsupported runtime-code generation is reported whether the mediator is registered through DI or constructed directly.
+- Single-flight creation for cached wrappers and open-generic resolution plans, preventing duplicate factory compilation under concurrent first use.
+- NuGet metadata improvements, including SourceLink, copyright, release notes, and a non-transitive build props file.
+
+### Changed
+- Open-generic request handlers remain intentionally transient and are created per request, regardless of `DefaultLifetime`. The resolution plan is cached, but handler instances are not. Closed handlers and all native DI registrations continue to honor `DefaultLifetime`.
+- The default language version is now SDK-controlled (`LangVersion=default`) for reproducible framework-aligned compilation.
+- Documentation now explicitly distinguishes assembly-scanned handlers from pipeline behaviors, which must be registered with `AddBehavior`.
+
+### Fixed
+- Removed the transitive global using from the NuGet package so installing SimpleMediator does not alter the compilation namespace of downstream projects.
 
 ## [3.1.0] - 2026-07-21
 
