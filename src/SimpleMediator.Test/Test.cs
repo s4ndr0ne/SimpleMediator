@@ -1614,6 +1614,28 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
+    public void BoundedFactoryCache_RetriesAfterFactoryFailure()
+    {
+        var cache = new BoundedFactoryCache<int, string>(1);
+        var attempts = 0;
+
+        Assert.Throws<InvalidOperationException>(() => cache.GetOrAdd(1, _ =>
+        {
+            attempts++;
+            throw new InvalidOperationException("transient failure");
+        }));
+
+        var value = cache.GetOrAdd(1, _ =>
+        {
+            attempts++;
+            return "recovered";
+        });
+
+        Assert.Equal("recovered", value);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
     public void Unit_IsReadonlyStruct()
     {
         Assert.True(typeof(Unit).IsValueType);

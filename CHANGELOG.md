@@ -24,7 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Documentation now explicitly distinguishes assembly-scanned handlers from pipeline behaviors, which must be registered with `AddBehavior`.
 
 ### Fixed
-- Removed the transitive global using from the NuGet package so installing SimpleMediator does not alter the compilation namespace of downstream projects.
+- Removed the package build props file so installing SimpleMediator does not add a transitive global using to consumer projects.
+- Faulted cache factory entries are evicted, allowing a later resolution attempt to retry after a transient failure.
 
 ## [3.1.0] - 2026-07-21
 

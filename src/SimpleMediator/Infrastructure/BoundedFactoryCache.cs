@@ -44,9 +44,27 @@ internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
                 }
             }
 
-            return candidate.Value;
+            return GetValueAndRemoveIfFaulted(key, candidate);
         }
 
-        return _entries.TryGetValue(key, out existing) ? existing.Value : candidate.Value;
+        return _entries.TryGetValue(key, out existing)
+            ? GetValueAndRemoveIfFaulted(key, existing)
+            : GetValueAndRemoveIfFaulted(key, candidate);
+    }
+
+    private TValue GetValueAndRemoveIfFaulted(TKey key, Lazy<TValue> entry)
+    {
+        try
+        {
+            return entry.Value;
+        }
+        catch
+        {
+            // Do not poison the cache permanently when a transient factory failure occurs.
+            // Remove only this exact Lazy instance so a concurrent replacement is preserved.
+            ((ICollection<KeyValuePair<TKey, Lazy<TValue>>>)_entries)
+                .Remove(new KeyValuePair<TKey, Lazy<TValue>>(key, entry));
+            throw;
+        }
     }
 }
