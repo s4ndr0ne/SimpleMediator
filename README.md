@@ -49,6 +49,8 @@ services.AddSimpleMediator(options =>
 var serviceProvider = services.BuildServiceProvider();
 ```
 
+In a long-running application, resolve and use `IMediator` inside the request/operation scope. Do not capture a mediator resolved from the root provider in a singleton or background service; the mediator intentionally uses the provider it was resolved from. For production hosts, enable the host's scope/build validation and set `options.ValidateOnBuild = true` where appropriate.
+
 ## Usage
 
 ### Request/Response
@@ -248,7 +250,9 @@ dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks 
 The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
-SimpleMediator relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`. It targets classic (JIT) hosts such as ASP.NET Core and is **not currently Native-AOT or trimming-safe**. `AddSimpleMediator`, `IMediator`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, so unsupported trim/AOT usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed`/`PublishAot` without your own verification.
+Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The implementation relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`, and the supported deployment target is classic JIT execution such as standard ASP.NET Core.
+
+`AddSimpleMediator`, `IMediator`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
 
 The package does not inject transitive global usings into consumer projects. Add `using SimpleMediator.Interfaces;` explicitly, or enable the namespace in the consuming project if desired.
 

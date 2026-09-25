@@ -1636,6 +1636,41 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
+    public void BoundedFactoryCache_DoesNotRetainFaultedKeysOrEvictTheirReplacement()
+    {
+        var cache = new BoundedFactoryCache<int, string>(2);
+
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            Assert.Throws<InvalidOperationException>(() => cache.GetOrAdd(1, _ =>
+                throw new InvalidOperationException("transient failure")));
+        }
+
+        Assert.Equal(0, cache.TrackedKeyCount);
+
+        Assert.Equal("other", cache.GetOrAdd(2, _ => "other"));
+
+        var successfulFactoryCalls = 0;
+        Assert.Equal("recovered", cache.GetOrAdd(1, _ =>
+        {
+            successfulFactoryCalls++;
+            return "recovered";
+        }));
+        Assert.Equal(1, successfulFactoryCalls);
+
+        Assert.Equal("third", cache.GetOrAdd(3, _ => "third"));
+
+        // A stale queue entry from the failed attempts must not evict the live entry.
+        Assert.Equal("recovered", cache.GetOrAdd(1, _ =>
+        {
+            successfulFactoryCalls++;
+            return "unexpected-recreation";
+        }));
+        Assert.Equal(1, successfulFactoryCalls);
+        Assert.Equal(2, cache.TrackedKeyCount);
+    }
+
+    [Fact]
     public void Unit_IsReadonlyStruct()
     {
         Assert.True(typeof(Unit).IsValueType);

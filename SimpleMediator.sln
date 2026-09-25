@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleMediator.ConsoleTest"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleMediator.Test", "src\SimpleMediator.Test\SimpleMediator.Test.csproj", "{70CF0F05-CC45-4C81-8D01-8C6B4DB891A1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleMediator.IntegrationTest", "src\SimpleMediator.IntegrationTest\SimpleMediator.IntegrationTest.csproj", "{B7214503-DC3C-4975-BF43-0C961F2C374E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -57,6 +59,18 @@ Global
 		{70CF0F05-CC45-4C81-8D01-8C6B4DB891A1}.Release|x64.Build.0 = Release|Any CPU
 		{70CF0F05-CC45-4C81-8D01-8C6B4DB891A1}.Release|x86.ActiveCfg = Release|Any CPU
 		{70CF0F05-CC45-4C81-8D01-8C6B4DB891A1}.Release|x86.Build.0 = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|x64.Build.0 = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Debug|x86.Build.0 = Debug|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|x64.ActiveCfg = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|x64.Build.0 = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|x86.ActiveCfg = Release|Any CPU
+		{B7214503-DC3C-4975-BF43-0C961F2C374E}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -65,5 +79,6 @@ Global
 		{D081FD22-CF3C-4841-85E6-149E1D064C9C} = {201F48B5-3381-4C68-8396-9979FEB0589D}
 		{9EF907A4-E759-4B49-B39F-EBD8B4C03B41} = {201F48B5-3381-4C68-8396-9979FEB0589D}
 		{70CF0F05-CC45-4C81-8D01-8C6B4DB891A1} = {201F48B5-3381-4C68-8396-9979FEB0589D}
+		{B7214503-DC3C-4975-BF43-0C961F2C374E} = {201F48B5-3381-4C68-8396-9979FEB0589D}
 	EndGlobalSection
 EndGlobal
