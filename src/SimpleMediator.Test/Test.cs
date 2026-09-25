@@ -1391,6 +1391,46 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         }
     }
 
+    private static (Assembly Assembly, Type HandlerType) CreateNativeOpenGenericHandlerAssembly()
+    {
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName($"NativeOpenGenericHandler_{Guid.NewGuid():N}"),
+            AssemblyBuilderAccess.Run);
+        var module = assembly.DefineDynamicModule("Handlers");
+        var typeBuilder = module.DefineType(
+            "NativeOpenGenericHandler",
+            TypeAttributes.Public | TypeAttributes.Class);
+        var typeParameters = typeBuilder.DefineGenericParameters("TRequest", "TResponse");
+        typeParameters[0].SetInterfaceConstraints(typeof(IRequest<>).MakeGenericType(typeParameters[1]));
+        var handlerInterface = typeof(IRequestHandler<,>).MakeGenericType(typeParameters);
+        typeBuilder.AddInterfaceImplementation(handlerInterface);
+        typeBuilder.DefineDefaultConstructor(MethodAttributes.Public);
+
+        var interfaceMethod = typeof(IRequestHandler<,>).GetMethod("Handle")!;
+        var implementationMethod = typeBuilder.DefineMethod(
+            interfaceMethod.Name,
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final |
+            MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            typeof(Task<>).MakeGenericType(typeParameters[1]),
+            new[] { typeParameters[0], typeof(CancellationToken) });
+        var generator = implementationMethod.GetILGenerator();
+        var responseLocal = generator.DeclareLocal(typeParameters[1]);
+        generator.Emit(OpCodes.Ldloca_S, responseLocal);
+        generator.Emit(OpCodes.Initobj, typeParameters[1]);
+        generator.Emit(OpCodes.Ldloc_0);
+        var fromResult = typeof(Task)
+            .GetMethod("FromResult")!
+            .MakeGenericMethod(typeParameters[1]);
+        generator.Emit(OpCodes.Call, fromResult);
+        generator.Emit(OpCodes.Ret);
+        typeBuilder.DefineMethodOverride(
+            implementationMethod,
+            TypeBuilder.GetMethod(handlerInterface, interfaceMethod));
+
+        var handlerType = typeBuilder.CreateType()!;
+        return (assembly, handlerType);
+    }
+
     private static Type CreatePrivateConstructorOpenGenericHandler()
     {
         var assembly = AssemblyBuilder.DefineDynamicAssembly(
@@ -1743,6 +1783,44 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         Assert.Equal(
             new[] { typeof(FirstNotificationHandler), typeof(SecondNotificationHandler) },
             handlers);
+    }
+
+    [Fact]
+    public async Task AssemblyScan_RegistersNativeCompatibleOpenGenericRequestHandlersWithConfiguredLifetime()
+    {
+        var (assembly, handlerType) = CreateNativeOpenGenericHandlerAssembly();
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Scoped;
+            options.RegisterAssembly(assembly);
+        });
+
+        var descriptor = Assert.Single(services,
+            service => service.ServiceType == typeof(IRequestHandler<,>) &&
+                       service.ImplementationType == handlerType);
+        Assert.Equal(ServiceLifetime.Scoped, descriptor.Lifetime);
+
+        var configuration = Assert.IsType<MediatorConfiguration>(services
+            .Single(service => service.ServiceType == typeof(MediatorConfiguration))
+            .ImplementationInstance);
+        Assert.Empty(configuration.CustomOpenGenericRequestHandlers);
+
+        using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var firstScope = provider.CreateScope();
+        var firstHandler = firstScope.ServiceProvider.GetRequiredService<IRequestHandler<PingRequest, string>>();
+        var sameScopeHandler = firstScope.ServiceProvider.GetRequiredService<IRequestHandler<PingRequest, string>>();
+
+        using var secondScope = provider.CreateScope();
+        var secondHandler = secondScope.ServiceProvider.GetRequiredService<IRequestHandler<PingRequest, string>>();
+
+        Assert.Same(firstHandler, sameScopeHandler);
+        Assert.NotSame(firstHandler, secondHandler);
+
+        var mediator = firstScope.ServiceProvider.GetRequiredService<IMediator>();
+        var response = await mediator.Send<string>(new PingRequest("native"));
+
+        Assert.Null(response);
     }
 
     [Fact]

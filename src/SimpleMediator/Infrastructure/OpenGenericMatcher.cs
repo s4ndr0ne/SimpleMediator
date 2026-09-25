@@ -3,10 +3,10 @@ using SimpleMediator.Interfaces;
 namespace SimpleMediator.Core;
 
 /// <summary>
-/// Closes an open-generic request-handler implementation against a concrete
+/// Closes a non-native open-generic request-handler implementation against a concrete
 /// (request, response) pair. Microsoft DI only supports open generics whose
 /// implementation type parameters line up 1:1 with the service interface, so it
-/// cannot resolve handlers for generic requests such as
+/// cannot resolve custom mappings such as
 /// <c>EchoHandler&lt;T&gt; : IRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c>.
 /// This matcher performs that unification by hand at request time.
 /// </summary>

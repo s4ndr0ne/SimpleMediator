@@ -10,7 +10,10 @@ internal static class RequestHandlerResolver
     {
         // Avoid materializing the DI result with ToList(). Requests normally have one
         // closed handler, so keeping only the first instance and a count saves a temporary
-        // List allocation while preserving the multiple-handler validation.
+        // List allocation while preserving the multiple-handler validation. This path covers
+        // closed handlers and native-compatible open-generic handlers registered in DI, so
+        // lifetime and disposal follow the container. Only custom-mapped open generics fall
+        // through to the factory path below.
         IRequestHandler<TRequest, TResponse>? closedHandler = null;
         var closedHandlerCount = 0;
         foreach (var candidate in serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>())
@@ -46,9 +49,10 @@ internal static class RequestHandlerResolver
             return new HandlerLease<TRequest, TResponse>(closedHandler!);
         }
 
-        // Exactly one open-generic match: build it via the cached factory, injecting its
-        // dependencies from the current (scope-correct) provider. Open-generic request
-        // handlers are created per request (transient) regardless of DefaultLifetime.
+        // Exactly one custom-mapped open-generic match: build it via the cached factory,
+        // injecting its dependencies from the current (scope-correct) provider. Custom-mapped
+        // request handlers are created per request (transient) regardless of DefaultLifetime
+        // and disposed by the request lease; native-compatible open generics above follow DI.
         var openGenericHandler = openMatches[0](serviceProvider, arguments: null);
         return new HandlerLease<TRequest, TResponse>((IRequestHandler<TRequest, TResponse>)openGenericHandler, openGenericHandler);
     }

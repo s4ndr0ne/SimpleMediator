@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+- Native-compatible open-generic request handlers (`Handler<TRequest, TResponse> : IRequestHandler<TRequest, TResponse>`) are now registered as ordinary open-generic DI services and follow `DefaultLifetime` with container-managed disposal. Only custom-mapped handlers (e.g. `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>`) keep the per-request transient activation path. Handler decoration remains unsupported by the single-handler resolver; use `IPipelineBehavior<,>` for cross-cutting concerns.
+
 ## [4.0.0]
 
 ### Changed

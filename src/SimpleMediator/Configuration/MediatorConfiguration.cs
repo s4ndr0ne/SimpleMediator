@@ -16,11 +16,12 @@ internal sealed class MediatorConfiguration
     public bool ValidationRequested { get; private set; }
 
     /// <summary>
-    /// Open-generic request-handler implementation types discovered by assembly scanning
-    /// (e.g. <c>EchoHandler&lt;&gt;</c>). These cannot be registered with Microsoft DI and
-    /// are closed on demand by the request wrapper. See <see cref="OpenGenericMatcher"/>.
+    /// Open-generic request-handler implementation types that need custom type-argument
+    /// inference (e.g. <c>EchoHandler&lt;T&gt; : IRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c>).
+    /// Handlers compatible with native open-generic DI registration are registered directly
+    /// in the service collection instead. See <see cref="OpenGenericMatcher"/>.
     /// </summary>
-    public IReadOnlyList<Type> OpenGenericRequestHandlers { get; }
+    public IReadOnlyList<Type> CustomOpenGenericRequestHandlers { get; }
 
     // Caches the *resolution plan* (matched closed types + compiled factories) per
     // request/response pair — never the handler instance, so scoped dependencies stay correct.
@@ -30,7 +31,7 @@ internal sealed class MediatorConfiguration
 
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
-        IReadOnlyList<Type>? openGenericRequestHandlers = null,
+        IReadOnlyList<Type>? customOpenGenericRequestHandlers = null,
         int resolutionCacheCapacity = 1024,
         bool validationRequested = false)
     {
@@ -38,7 +39,7 @@ internal sealed class MediatorConfiguration
         NotificationPublishStrategy = notificationPublishStrategy;
         ResolutionCacheCapacity = resolutionCacheCapacity;
         ValidationRequested = validationRequested;
-        OpenGenericRequestHandlers = openGenericRequestHandlers ?? NoTypes;
+        CustomOpenGenericRequestHandlers = customOpenGenericRequestHandlers ?? NoTypes;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
         RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
         NotificationHandlerWrappers = new BoundedFactoryCache<Type, object>(1024);
@@ -55,13 +56,13 @@ internal sealed class MediatorConfiguration
 
     private OpenGenericResolution BuildResolution(Type requestType, Type responseType)
     {
-        if (OpenGenericRequestHandlers.Count == 0)
+        if (CustomOpenGenericRequestHandlers.Count == 0)
         {
             return OpenGenericResolution.Empty;
         }
 
         List<ObjectFactory>? factories = null;
-        foreach (var openHandler in OpenGenericRequestHandlers)
+        foreach (var openHandler in CustomOpenGenericRequestHandlers)
         {
             if (OpenGenericMatcher.TryClose(openHandler, requestType, responseType, out var closedImplementation))
             {

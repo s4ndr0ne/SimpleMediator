@@ -17,9 +17,10 @@ internal static class MediatorAssemblyScanner
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     internal static List<Type> ScanAndRegister(IServiceCollection services, SimpleMediatorOptions options)
     {
-        // Open-generic request handlers are closed on demand because their request type may
-        // not line up with Microsoft's native open-generic registration rules.
-        var openGenericRequestHandlers = new List<Type>();
+        // Keep only request handlers that need custom type-argument inference. Handlers whose
+        // implementation parameters line up with IRequestHandler<TRequest, TResponse> are
+        // registered through native DI and inherit its lifetime and decoration semantics.
+        var customOpenGenericRequestHandlers = new List<Type>();
 
         foreach (var assembly in options.Assemblies)
         {
@@ -44,7 +45,7 @@ internal static class MediatorAssemblyScanner
             {
                 if (type.IsGenericTypeDefinition)
                 {
-                    RegisterOpenGenericType(services, type, options.DefaultLifetime, openGenericRequestHandlers);
+                    RegisterOpenGenericType(services, type, options.DefaultLifetime, customOpenGenericRequestHandlers);
                     continue;
                 }
 
@@ -64,49 +65,58 @@ internal static class MediatorAssemblyScanner
             }
         }
 
-        return openGenericRequestHandlers;
+        return customOpenGenericRequestHandlers;
     }
 
     private static void RegisterOpenGenericType(
         IServiceCollection services,
         Type type,
         ServiceLifetime lifetime,
-        List<Type> openGenericRequestHandlers)
+        List<Type> customOpenGenericRequestHandlers)
     {
-        var implementsRequestHandler = false;
+        var implementedInterfaces = type.GetInterfaces()
+            .Where(implementedInterface => implementedInterface.IsGenericType)
+            .ToArray();
 
-        foreach (var implementedInterface in type.GetInterfaces())
+        foreach (var implementedInterface in implementedInterfaces)
         {
-            if (!implementedInterface.IsGenericType)
-            {
-                continue;
-            }
-
-            var genericTypeDefinition = implementedInterface.GetGenericTypeDefinition();
-            if (genericTypeDefinition == typeof(IRequestHandler<,>))
-            {
-                implementsRequestHandler = true;
-            }
-
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPostRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IRequestExceptionHandler<,>), lifetime);
         }
 
-        if (implementsRequestHandler)
-        {
-            if (!OpenGenericMatcher.CanInferOpenGenericRequestHandler(type))
-            {
-                throw new InvalidOperationException(
-                    $"Open-generic request handler '{type.FullName}' has a request/response mapping that cannot be inferred. " +
-                    "Every implementation type parameter must appear in the request or response pattern, or the handler must be registered as a closed type.");
-            }
+        var requestHandlerInterfaces = implementedInterfaces
+            .Where(implementedInterface =>
+                implementedInterface.GetGenericTypeDefinition() == typeof(IRequestHandler<,>))
+            .ToArray();
 
-            if (!openGenericRequestHandlers.Contains(type))
-            {
-                openGenericRequestHandlers.Add(type);
-            }
+        if (requestHandlerInterfaces.Length == 0)
+        {
+            return;
+        }
+
+        if (requestHandlerInterfaces.All(implementedInterface =>
+                OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+                    type,
+                    implementedInterface,
+                    typeof(IRequestHandler<,>))))
+        {
+            services.TryAddEnumerable(
+                new ServiceDescriptor(typeof(IRequestHandler<,>), type, lifetime));
+            return;
+        }
+
+        if (!OpenGenericMatcher.CanInferOpenGenericRequestHandler(type))
+        {
+            throw new InvalidOperationException(
+                $"Open-generic request handler '{type.FullName}' has a request/response mapping that cannot be inferred. " +
+                "Every implementation type parameter must appear in the request or response pattern, or the handler must be registered as a closed type.");
+        }
+
+        if (!customOpenGenericRequestHandlers.Contains(type))
+        {
+            customOpenGenericRequestHandlers.Add(type);
         }
     }
 

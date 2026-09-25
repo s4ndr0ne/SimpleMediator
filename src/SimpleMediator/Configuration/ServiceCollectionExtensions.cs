@@ -58,8 +58,8 @@ public static class ServiceCollectionExtensions
         // provider, even when handler lifetimes are configured as singleton.
         services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
 
-        var openGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        var configuration = MergeConfiguration(services, options, openGenericRequestHandlers);
+        var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
+        var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers);
 
         RegisterBehaviors(services, options);
 
@@ -138,7 +138,7 @@ public static class ServiceCollectionExtensions
     private static MediatorConfiguration MergeConfiguration(
         IServiceCollection services,
         SimpleMediatorOptions options,
-        List<Type> openGenericRequestHandlers)
+        List<Type> customOpenGenericRequestHandlers)
     {
         var existingDescriptor = services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(MediatorConfiguration));
 
@@ -152,8 +152,8 @@ public static class ServiceCollectionExtensions
                 ? options.OpenGenericResolutionCacheCapacity
                 : existing.ResolutionCacheCapacity;
 
-            var mergedHandlers = existing.OpenGenericRequestHandlers
-                .Concat(openGenericRequestHandlers)
+            var mergedHandlers = existing.CustomOpenGenericRequestHandlers
+                .Concat(customOpenGenericRequestHandlers)
                 .Distinct()
                 .ToList();
 
@@ -171,7 +171,7 @@ public static class ServiceCollectionExtensions
 
         var initialConfiguration = new MediatorConfiguration(
             options.NotificationPublishStrategy,
-            openGenericRequestHandlers,
+            customOpenGenericRequestHandlers,
             options.OpenGenericResolutionCacheCapacity,
             options.ValidateOnBuild);
         services.AddSingleton(initialConfiguration);

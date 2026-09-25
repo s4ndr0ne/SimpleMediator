@@ -50,7 +50,7 @@ internal static class MediatorRegistrationValidator
             return;
         }
 
-        foreach (var openHandler in configuration.OpenGenericRequestHandlers.Distinct())
+        foreach (var openHandler in configuration.CustomOpenGenericRequestHandlers.Distinct())
         {
             ValidateOpenGenericImplementation(openHandler);
 
@@ -76,7 +76,7 @@ internal static class MediatorRegistrationValidator
         foreach (var group in requestHandlerGroups)
         {
             var typeArguments = group.Key.GetGenericArguments();
-            foreach (var openHandler in configuration.OpenGenericRequestHandlers)
+            foreach (var openHandler in configuration.CustomOpenGenericRequestHandlers)
             {
                 if (OpenGenericMatcher.TryClose(openHandler, typeArguments[0], typeArguments[1], out _))
                 {
