@@ -6,8 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- **Correctness:** a `Singleton` custom-mapped open-generic request handler no longer captures the first request scope's provider. It is now built from the root provider, and a singleton custom handler that declares a `Scoped` or `Transient` constructor dependency is rejected during registration. Previously such a handler held — and handed out — a dependency from an already-disposed scope.
+- **Correctness:** failures raised while *constructing* the request handler, a behavior, or a pre/post handler are now routed to `IRequestExceptionHandler<,>`. They used to escape the exception pipeline entirely, so a global catch-all silently missed missing-dependency and bad-configuration failures.
+- **Correctness:** if the `IRequestExceptionHandler<,>` instances cannot themselves be resolved, the original request exception is rethrown instead of being replaced by the unrelated DI error.
+- **Correctness:** an open generic handler nested inside a generic type (`Outer<T>.Handler<TU>`) is now skipped during scanning instead of aborting the whole composition root. Such a type can never be closed by any caller, so it no longer takes the application down at startup.
+- **Correctness:** a handler, pre/post handler, or behavior that returns `null` instead of a `Task` now fails with an `InvalidOperationException` naming the handler instead of a bare `NullReferenceException`.
+- **Correctness:** pipeline behavior and exception handler `Order` is read once per request and sorted from that snapshot, so an `Order` that changes between reads can no longer produce an inconsistent sort.
+- **Startup:** registering the same pipeline behavior for the same request/response pair with conflicting lifetimes is reported instead of being silently resolved by `TryAddEnumerable` discard order.
+
+### Added
+- `SimpleMediatorOptions.RequireScopedMediator` (default `true`): resolving `IMediator` from the root service provider now throws `MediatorScopeException` instead of silently promoting every scoped dependency to a process-wide singleton.
+- `IServiceScopeFactory.CreateMediatorScope()` / `IServiceProvider.CreateMediatorScope()`: creates a scope and the mediator resolved from it as one disposable handle, for background services, hosted services, and queue consumers.
+- `SimpleMediatorOptions.RegisterAssembly(Assembly, Func<Type, bool>)`: excludes types from discovery. Registering the same assembly again narrows the accepted set rather than replacing the predicate.
+- `RequestHandlerResolutionException` (derives from `InvalidOperationException`) for "no handler" / "multiple handlers". It is deliberately not offered to `IRequestExceptionHandler<,>`, because handler selection is a wiring defect rather than a request failure. Existing `catch (InvalidOperationException)` sites are unaffected.
+- `SimpleMediator.SafetyTest` project pinning the scope, lifetime, ordering, and failure-routing contracts.
+
 ### Changed
-- Native-compatible open-generic request handlers (`Handler<TRequest, TResponse> : IRequestHandler<TRequest, TResponse>`) are now registered as ordinary open-generic DI services and follow `DefaultLifetime` with container-managed disposal. Only custom-mapped handlers (e.g. `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>`) keep the per-request transient activation path. Handler decoration remains unsupported by the single-handler resolver; use `IPipelineBehavior<,>` for cross-cutting concerns.
+- `IOrderedPipelineBehavior.Order` is now a default interface member defaulting to `0`, matching `IRequestExceptionHandler<,>.Order`. Both ordering contracts now behave identically, and a behavior may omit `Order`.
+- Native-compatible open-generic request handlers (`Handler<TRequest, TResponse> : IRequestHandler<TRequest, TResponse>`) are registered as ordinary open-generic DI services and follow `DefaultLifetime` with container-managed disposal. Only custom-mapped handlers (e.g. `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>`) use SimpleMediator's own activation, and they now follow `DefaultLifetime` as documented instead of always being transient. Handler decoration remains unsupported; use `IPipelineBehavior<,>` for cross-cutting concerns.
+- The README documents actual behaviour: the scope contract, the real open-generic lifetime matrix, exactly which failures reach an exception handler, assembly-scanning rules, the true per-`Send` cost, AOT/trimming build impact for consumers, and a known-limitations list.
 
 ## [4.0.0]
 

@@ -62,7 +62,7 @@ public class UnitTest1
         var mediator = new Mediator(provider);
 
         // Act
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<RequestHandlerResolutionException>(() =>
             mediator.Send<string>(new PingRequest("hello")));
 
         // Assert
@@ -85,7 +85,7 @@ public class UnitTest1
         });
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         await mediator.Publish(new TestNotification("N1"));
@@ -295,10 +295,14 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var probe = new CallProbe();
         var services = new ServiceCollection();
         services.AddSingleton(probe);
-        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
 
         using var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         await mediator.Send(new DisposableOpenGenericRequest<int>(42));
 
@@ -311,12 +315,16 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var probe = new CallProbe();
         var services = new ServiceCollection();
         services.AddSingleton(probe);
-        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
         services.AddTransient<IPreRequestHandler<DisposableOpenGenericRequest<int>, int>>(
             _ => throw new InvalidOperationException("Unable to construct pre-handler."));
 
         using var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => mediator.Send(new DisposableOpenGenericRequest<int>(42)));
@@ -330,7 +338,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     {
         var configuration = new MediatorConfiguration(
             NotificationPublishStrategy.Sequential,
-            new[] { typeof(EchoHandler<>) },
+            new[] { new OpenGenericHandlerRegistration(typeof(EchoHandler<>), ServiceLifetime.Transient) },
             resolutionCacheCapacity: 1);
 
         var first = configuration.ResolveOpenGeneric(typeof(EchoRequest<int>), typeof(int));
@@ -389,7 +397,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         await mediator.Send<string>(new OrderedRequest());
@@ -416,7 +424,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         await mediator.Send<string>(new OrderedRequest());
@@ -440,7 +448,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
 
         using var provider = services.BuildServiceProvider();
-        await provider.GetRequiredService<IMediator>().Send<string>(new OrderedRequest());
+        await ResolveScopedMediator(provider).Send<string>(new OrderedRequest());
 
         // v4 contract: first registered behavior with equal Order is outermost and runs first (FIFO).
         Assert.Equal(
@@ -613,7 +621,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         await mediator.Publish(new ConcurrencyNotification());
@@ -637,7 +645,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         await mediator.Publish(new ConcurrencyNotification());
@@ -659,7 +667,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act - two handlers both throw.
         var ex = await Assert.ThrowsAsync<AggregateException>(() =>
@@ -679,7 +687,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
         });
         services.AddTransient<INotificationHandler<SingleFailureNotification>, SingleFailureHandler>();
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => mediator.Publish(new SingleFailureNotification()));
@@ -696,7 +704,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
         });
         services.AddTransient<INotificationHandler<NullTaskNotification>, NullTaskHandler>();
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => mediator.Publish(new NullTaskNotification()));
@@ -714,7 +722,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         });
         services.AddTransient<INotificationHandler<MixedFailureNotification>, MixedCancellationHandler>();
         services.AddTransient<INotificationHandler<MixedFailureNotification>, MixedErrorHandler>();
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
 
@@ -756,8 +764,8 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var provider = services.BuildServiceProvider();
 
         // Act - resolve twice from the SAME (root) provider.
-        var first = provider.GetRequiredService<IMediator>();
-        var second = provider.GetRequiredService<IMediator>();
+        var first = ResolveScopedMediator(provider);
+        var second = ResolveScopedMediator(provider);
 
         // Assert - Transient yields distinct instances (Scoped/Singleton would not).
         Assert.NotSame(first, second);
@@ -889,7 +897,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var services = new ServiceCollection();
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act - the SAME open-generic handler serves both closed request types.
         var asInt = await mediator.Send<int>(new EchoRequest<int>(42));
@@ -913,7 +921,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         var result = await mediator.Send<string>(new WrapRequest<int>(7));
@@ -924,16 +932,73 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
+    public async Task Send_CustomOpenGenericHandler_RespectsScopedLifetime()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Scoped;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        Guid firstScopeId;
+        Guid secondScopeId;
+
+        using (var scope = provider.CreateScope())
+        {
+            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            firstScopeId = await mediator.Send<Guid>(new ScopedGenericRequest<int>());
+            var sameScopeId = await mediator.Send<Guid>(new ScopedGenericRequest<int>());
+            Assert.Equal(firstScopeId, sameScopeId);
+        }
+
+        using (var scope = provider.CreateScope())
+        {
+            secondScopeId = await scope.ServiceProvider.GetRequiredService<IMediator>()
+                .Send<Guid>(new ScopedGenericRequest<int>());
+        }
+
+        Assert.NotEqual(firstScopeId, secondScopeId);
+    }
+
+    [Fact]
+    public async Task Send_CustomOpenGenericHandler_RespectsSingletonLifetime()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Singleton;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        Guid firstId;
+        using (var scope = provider.CreateScope())
+        {
+            firstId = await scope.ServiceProvider.GetRequiredService<IMediator>()
+                .Send<Guid>(new SingletonGenericRequest<int>());
+        }
+
+        using (var scope = provider.CreateScope())
+        {
+            var secondId = await scope.ServiceProvider.GetRequiredService<IMediator>()
+                .Send<Guid>(new SingletonGenericRequest<int>());
+            Assert.Equal(firstId, secondId);
+        }
+    }
+
+    [Fact]
     public async Task Send_Throws_WhenClosedAndOpenGenericHandlersBothMatch()
     {
         // Arrange - a closed handler and an open-generic handler both satisfy AmbiguousRequest<int>.
         var services = new ServiceCollection();
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act + Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<RequestHandlerResolutionException>(() =>
             mediator.Send<int>(new AmbiguousRequest<int>(1)));
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
@@ -1140,7 +1205,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
         services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() => services.ValidateSimpleMediator());
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
 
@@ -1153,16 +1218,16 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<AmbiguousRequest<int>, int>, ClosedAmbiguousHandler>();
         services.AddSingleton(new MediatorConfiguration(
             NotificationPublishStrategy.Sequential,
-            new[] { typeof(OpenAmbiguousHandler<>) }));
+            new[] { new OpenGenericHandlerRegistration(typeof(OpenAmbiguousHandler<>), ServiceLifetime.Transient) }));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() => services.ValidateSimpleMediator());
         Assert.Contains("open-generic handler", ex.Message);
     }
 
     [Fact]
     public void ValidateOnBuild_FailsFast_DuringAddSimpleMediator()
     {
-        var ex = Assert.Throws<InvalidOperationException>(() =>
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() =>
             new ServiceCollection().AddSimpleMediator(options =>
             {
                 options.RegisterAssembly(typeof(UnitTest1).Assembly);
@@ -1180,7 +1245,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<PingRequest, string>>(_ => new PingRequestHandler());
         services.AddSingleton<IRequestHandler<PingRequest, string>>(new PingRequestHandler());
 
-        var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() => services.ValidateSimpleMediator());
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
 
@@ -1226,7 +1291,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var services = new ServiceCollection();
         services.AddSingleton(new MediatorConfiguration(
             NotificationPublishStrategy.Sequential,
-            new[] { typeof(OpenGenericPreHandler<,>) }));
+            new[] { new OpenGenericHandlerRegistration(typeof(OpenGenericPreHandler<,>), ServiceLifetime.Transient) }));
 
         var ex = Assert.Throws<InvalidOperationException>(() => services.ValidateSimpleMediator());
         Assert.Contains("cannot be inferred", ex.Message);
@@ -1238,7 +1303,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var services = new ServiceCollection();
         services.AddSingleton(new MediatorConfiguration(
             NotificationPublishStrategy.Sequential,
-            new[] { CreatePrivateConstructorOpenGenericHandler() }));
+            new[] { new OpenGenericHandlerRegistration(CreatePrivateConstructorOpenGenericHandler(), ServiceLifetime.Transient) }));
 
         var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
 
@@ -1269,7 +1334,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         var result = await mediator.Send<int>(new EchoRequest<int>(99));
         Assert.Equal(99, result);
@@ -1283,7 +1348,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
         services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() => services.AddSimpleMediator());
 
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
@@ -1297,7 +1362,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
         services.AddTransient<IRequestHandler<PingRequest, string>, DuplicatePingRequestHandler>();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => services.AddSimpleMediator());
+        var ex = Assert.Throws<RequestHandlerResolutionException>(() => services.AddSimpleMediator());
 
         Assert.Contains("Multiple request handlers registered", ex.Message);
     }
@@ -1309,7 +1374,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     {
         var services = new ServiceCollection();
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         var result = await mediator.Send<int[]>(new ArrayEchoRequest<int>(new[] { 1, 2, 3 }));
 
@@ -1317,6 +1382,26 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     public record ArrayEchoRequest<T>(T[] Values) : IRequest<T[]>;
+
+    public record ScopedGenericRequest<T>() : IRequest<Guid>;
+
+    public sealed class ScopedGenericHandler<T> : IRequestHandler<ScopedGenericRequest<T>, Guid>
+    {
+        private readonly Guid _id = Guid.NewGuid();
+
+        public Task<Guid> Handle(ScopedGenericRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(_id);
+    }
+
+    public record SingletonGenericRequest<T>() : IRequest<Guid>;
+
+    public sealed class SingletonGenericHandler<T> : IRequestHandler<SingletonGenericRequest<T>, Guid>
+    {
+        private readonly Guid _id = Guid.NewGuid();
+
+        public Task<Guid> Handle(SingletonGenericRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(_id);
+    }
 
     public class ArrayEchoHandler<T> : IRequestHandler<ArrayEchoRequest<T>, T[]>
     {
@@ -1332,7 +1417,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         OpenGenericHookProbe.Reset();
         var services = new ServiceCollection();
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         await mediator.Publish(new OpenGenericObservedNotification("scan"));
 
@@ -1345,7 +1430,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         OpenGenericHookProbe.Reset();
         var services = new ServiceCollection();
         services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         var response = await mediator.Send<string>(new OpenGenericHookRequest("scan"));
 
@@ -1532,7 +1617,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -1552,7 +1637,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             options.RegisterAssembly(typeof(UnitTest1).Assembly);
         });
         using var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
             mediator.Publish(new ParallelUncancelledNotification()));
@@ -1634,7 +1719,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<PingRequest, string>, PingRequestHandler>();
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act
         var response = await mediator.Send<string>(new PingRequest("plain"));
@@ -1650,8 +1735,8 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddSimpleMediator();
         var provider = services.BuildServiceProvider();
 
-        var first = provider.GetRequiredService<IMediator>();
-        var second = provider.GetRequiredService<IMediator>();
+        var first = ResolveScopedMediator(provider);
+        var second = ResolveScopedMediator(provider);
 
         Assert.NotSame(first, second);
     }
@@ -1670,7 +1755,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         services.AddTransient<IRequestHandler<VoidProbeRequest, Unit>, VoidProbeHandler>();
 
         var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(provider);
 
         // Act - Send(IRequest) does not return a value; it must not throw and the handler
         // must have run exactly once.
@@ -1700,7 +1785,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         var services = new ServiceCollection();
         services.AddSimpleMediator();
         services.AddTransient<IRequestHandler<CancelledVoidRequest, Unit>, CancelledVoidHandler>();
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
+        var mediator = ResolveScopedMediator(services.BuildServiceProvider());
 
         using var cancellationSource = new CancellationTokenSource();
         cancellationSource.Cancel();
@@ -2006,4 +2091,14 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         Assert.True(u1 == u2);
         Assert.False(u1 != u2);
     }
+
+    /// <summary>
+    /// Resolves a mediator the way an application must: from a scope, never from the root provider.
+    /// A root-owned mediator would turn every scoped handler dependency into a process-wide
+    /// instance, which <c>SimpleMediatorOptions.RequireScopedMediator</c> rejects by default. The
+    /// scope is left to the provider, which disposes it along with everything else at test end.
+    /// </summary>
+    private static IMediator ResolveScopedMediator(IServiceProvider root)
+        => root.CreateScope().ServiceProvider.GetRequiredService<IMediator>();
+
 }

@@ -19,7 +19,8 @@ public class SimpleMediatorOptions
 
     /// <summary>
     /// The default service lifetime used when registering discovered handlers and behaviors in DI.
-    /// Defaults to <see cref="ServiceLifetime.Scoped"/>.
+    /// This also applies to custom-mapped open-generic request handlers, whose instances are
+    /// cached and disposed according to this lifetime. Defaults to <see cref="ServiceLifetime.Scoped"/>.
     /// </summary>
     public ServiceLifetime DefaultLifetime
     {
@@ -65,6 +66,29 @@ public class SimpleMediatorOptions
     internal bool HasCustomCacheCapacity => _openGenericResolutionCacheCapacity.HasValue;
 
     /// <summary>
+    /// Per-assembly discovery filters registered through
+    /// <see cref="RegisterAssembly(Assembly, Func{Type, bool})"/>. An entry with a
+    /// <c>null</c> value means "no filter".
+    /// </summary>
+    internal Dictionary<Assembly, Func<Type, bool>?> AssemblyFilters { get; } = new();
+
+    /// <summary>
+    /// When <c>true</c> (the default), resolving <c>IMediator</c> from the application's
+    /// <em>root</em> service provider throws <see cref="Core.MediatorScopeException"/> instead of
+    /// silently degrading every scoped service to a process-wide singleton.
+    /// <para>
+    /// Resolve the mediator inside the request or operation scope. When a long-lived component
+    /// (background service, queue consumer, hosted service) needs a mediator, create one scope per
+    /// unit of work and resolve the mediator from that scope.
+    /// </para>
+    /// <para>
+    /// Set this to <c>false</c> only when root-owned dispatch is deliberate and every handler
+    /// dependency is itself a singleton.
+    /// </para>
+    /// </summary>
+    public bool RequireScopedMediator { get; set; } = true;
+
+    /// <summary>
     /// Registers an assembly to scan for request handlers, notification handlers, pre/post processors,
     /// and request exception handlers. Pipeline behaviors must be registered explicitly with
     /// <see cref="AddBehavior(Type)"/>.
@@ -72,12 +96,36 @@ public class SimpleMediatorOptions
     /// <param name="assembly">The assembly to scan.</param>
     /// <returns>This options instance for chaining.</returns>
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
+        => RegisterAssembly(assembly, filter: null);
+
+    /// <summary>
+    /// Registers an assembly to scan, optionally excluding types from discovery.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <param name="filter">
+    /// A predicate evaluated for every candidate type in <paramref name="assembly"/>. Returning
+    /// <c>false</c> skips the type, so it is never registered. Use it to exclude generated,
+    /// obsolete, or composition-root types from discovery.
+    /// </param>
+    /// <returns>This options instance for chaining.</returns>
+    public SimpleMediatorOptions RegisterAssembly(Assembly assembly, Func<Type, bool>? filter)
     {
         ArgumentNullException.ThrowIfNull(assembly);
 
         if (!Assemblies.Contains(assembly))
         {
             Assemblies.Add(assembly);
+        }
+
+        // A later call for the same assembly narrows the accepted set rather than replacing the
+        // previous predicate, so modular composition never silently re-admits excluded types.
+        if (!AssemblyFilters.TryGetValue(assembly, out var existing))
+        {
+            AssemblyFilters[assembly] = filter;
+        }
+        else if (filter is not null)
+        {
+            AssemblyFilters[assembly] = existing is null ? filter : (type => existing(type) && filter(type));
         }
 
         return this;

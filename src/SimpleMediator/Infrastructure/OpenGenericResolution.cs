@@ -9,9 +9,15 @@ namespace SimpleMediator;
 /// </summary>
 internal sealed class OpenGenericResolution
 {
-    public static readonly OpenGenericResolution Empty = new(Array.Empty<ObjectFactory>());
+    public static readonly OpenGenericResolution Empty = new(Array.Empty<OpenGenericHandlerFactory>());
 
-    public IReadOnlyList<ObjectFactory> Factories { get; }
+    public IReadOnlyList<OpenGenericHandlerFactory> Factories { get; }
 
-    public OpenGenericResolution(IReadOnlyList<ObjectFactory> factories) => Factories = factories;
+    public OpenGenericResolution(IReadOnlyList<OpenGenericHandlerFactory> factories) => Factories = factories;
 }
+
+internal sealed record OpenGenericHandlerFactory(
+    ObjectFactory Factory,
+    ServiceLifetime Lifetime,
+    Type RequestType,
+    Type ResponseType);

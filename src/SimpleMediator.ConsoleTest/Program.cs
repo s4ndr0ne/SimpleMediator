@@ -15,7 +15,11 @@ services.AddSimpleMediator(options =>
 
 var serviceProvider = services.BuildServiceProvider();
 
-var mediator = serviceProvider.GetRequiredService<IMediator>();
+// A mediator is always resolved from a scope. Resolving it from the root provider is rejected
+// (SimpleMediatorOptions.RequireScopedMediator), because a root-owned mediator would turn every
+// scoped dependency into a process-wide instance.
+using var scope = serviceProvider.CreateScope();
+var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
 Console.WriteLine("--- Testing Request/Response ---");
 var pingResponse = await mediator.Send(new PingRequest { Message = "Hello World" });

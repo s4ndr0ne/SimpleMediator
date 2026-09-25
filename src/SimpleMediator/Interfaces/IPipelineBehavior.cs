@@ -8,9 +8,10 @@ public interface IOrderedPipelineBehavior
     /// <summary>
     /// Execution priority. Lower values run first (outermost); behaviors with equal values
     /// run in registration order (FIFO): the first registered behavior is outermost and
-    /// runs first. The value is read from the current instance per request.
+    /// runs first. Defaults to <c>0</c>. The value is read once per request, so it may
+    /// depend on scoped state, but it must be stable for the duration of a single request.
     /// </summary>
-    int Order { get; }
+    int Order => 0;
 }
 
 /// <summary>

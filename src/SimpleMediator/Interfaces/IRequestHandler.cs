@@ -42,6 +42,12 @@ public abstract class RequestHandler<TRequest> : IRequestHandler<TRequest, Unit>
     public Task<Unit> Handle(TRequest request, CancellationToken cancellationToken)
     {
         var task = HandleCore(request, cancellationToken);
+        if (task is null)
+        {
+            throw new InvalidOperationException(
+                $"'{GetType().FullName}.HandleCore' returned a null Task. Every mediator handler method must return a non-null Task.");
+        }
+
         // A cancelled Task is completed and has no Exception, but it must still
         // propagate its OperationCanceledException to the caller.
         return task.IsCompletedSuccessfully

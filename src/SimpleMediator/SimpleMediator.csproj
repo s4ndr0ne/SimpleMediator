@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="SimpleMediator.Test" />
+    <InternalsVisibleTo Include="SimpleMediator.SafetyTest" />
     <InternalsVisibleTo Include="SimpleMediator.Benchmarks" />
   </ItemGroup>
 

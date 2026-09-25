@@ -27,19 +27,19 @@ internal static class RequestHandlerResolver
 
         var configuration = serviceProvider.GetService<MediatorConfiguration>();
         var openMatches = configuration?.ResolveOpenGeneric(typeof(TRequest), typeof(TResponse)).Factories
-                          ?? Array.Empty<ObjectFactory>();
+                          ?? Array.Empty<OpenGenericHandlerFactory>();
 
         var total = closedHandlerCount + openMatches.Count;
 
         if (total == 0)
         {
-            throw new InvalidOperationException(
+            throw new RequestHandlerResolutionException(
                 $"No request handler registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'.");
         }
 
         if (total > 1)
         {
-            throw new InvalidOperationException(
+            throw new RequestHandlerResolutionException(
                 $"Multiple request handlers registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'. " +
                 "A request can only have one handler.");
         }
@@ -49,12 +49,43 @@ internal static class RequestHandlerResolver
             return new HandlerLease<TRequest, TResponse>(closedHandler!);
         }
 
-        // Exactly one custom-mapped open-generic match: build it via the cached factory,
-        // injecting its dependencies from the current (scope-correct) provider. Custom-mapped
-        // request handlers are created per request (transient) regardless of DefaultLifetime
-        // and disposed by the request lease; native-compatible open generics above follow DI.
-        var openGenericHandler = openMatches[0](serviceProvider, arguments: null);
-        return new HandlerLease<TRequest, TResponse>((IRequestHandler<TRequest, TResponse>)openGenericHandler, openGenericHandler);
+        // Exactly one custom-mapped open-generic match: resolve it through the lifetime store
+        // that matches the configured lifetime. Transient instances belong to this request and are
+        // disposed by the lease; scoped instances belong to the current DI scope; singleton
+        // instances are always built from the ROOT provider so a handler can never capture a
+        // request scope (see OpenGenericSingletonLifetimeStore).
+        var match = openMatches[0];
+        object openGenericHandler;
+        object? ownedInstance = null;
+        switch (match.Lifetime)
+        {
+            case ServiceLifetime.Singleton:
+            {
+                var store = serviceProvider.GetRequiredService<OpenGenericSingletonLifetimeStore>();
+                openGenericHandler = store.GetOrAdd(
+                    (match.RequestType, match.ResponseType, match.Factory),
+                    () => match.Factory(store.RootProvider, arguments: null));
+                break;
+            }
+
+            case ServiceLifetime.Scoped:
+            {
+                var store = serviceProvider.GetRequiredService<OpenGenericScopedLifetimeStore>();
+                openGenericHandler = store.GetOrAdd(
+                    (match.RequestType, match.ResponseType, match.Factory),
+                    () => match.Factory(serviceProvider, arguments: null));
+                break;
+            }
+
+            default:
+                openGenericHandler = match.Factory(serviceProvider, arguments: null);
+                ownedInstance = openGenericHandler;
+                break;
+        }
+
+        return new HandlerLease<TRequest, TResponse>(
+            (IRequestHandler<TRequest, TResponse>)openGenericHandler,
+            ownedInstance);
     }
 
     internal readonly struct HandlerLease<TRequest, TResponse>

@@ -6,13 +6,22 @@ namespace SimpleMediator.Core;
 
 internal static class RequestHandlerPipeline
 {
+    /// <summary>
+    /// Runs the pre-handlers, the request handler, and the post-handlers, wrapped in the
+    /// registered pipeline behaviors.
+    /// </summary>
+    /// <remarks>
+    /// This method does <em>not</em> catch exceptions. The caller
+    /// (<see cref="RequestHandlerWrapperImpl{TRequest, TResponse}"/>) owns the single try/catch so
+    /// that failures raised while <em>constructing</em> the handler, the pre/post handlers, or the
+    /// behaviors are routed to <see cref="IRequestExceptionHandler{TRequest, TResponse}"/> as well.
+    /// </remarks>
     public static async Task<TResponse> Execute<TRequest, TResponse>(
         TRequest request,
         IRequestHandler<TRequest, TResponse> handler,
         IEnumerable<IPreRequestHandler<TRequest, TResponse>> preHandlers,
         IEnumerable<IPostRequestHandler<TRequest, TResponse>> postHandlers,
         IEnumerable<IPipelineBehavior<TRequest, TResponse>> behaviors,
-        IServiceProvider serviceProvider,
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
@@ -23,79 +32,85 @@ internal static class RequestHandlerPipeline
         var postList = postHandlers as IReadOnlyList<IPostRequestHandler<TRequest, TResponse>>
                        ?? postHandlers.ToArray();
 
-        try
+        if (behaviorList.Count == 0)
         {
-            if (behaviorList.Count == 0)
+            if (preList.Count == 0 && postList.Count == 0)
             {
-                if (preList.Count == 0 && postList.Count == 0)
-                {
-                    return await handler.Handle(request, cancellationToken).ConfigureAwait(false);
-                }
-
-                foreach (var pre in preList)
-                {
-                    await pre.Handle(request, cancellationToken).ConfigureAwait(false);
-                }
-
-                var result = await handler.Handle(request, cancellationToken).ConfigureAwait(false);
-
-                foreach (var post in postList)
-                {
-                    await post.Handle(request, result, cancellationToken).ConfigureAwait(false);
-                }
-
-                return result;
+                return await Await(handler.Handle(request, cancellationToken), handler).ConfigureAwait(false);
             }
 
-            RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
+            foreach (var pre in preList)
             {
-                foreach (var pre in preList)
-                {
-                    await pre.Handle(request, ct).ConfigureAwait(false);
-                }
-
-                var result = await handler.Handle(request, ct).ConfigureAwait(false);
-
-                foreach (var post in postList)
-                {
-                    await post.Handle(request, result, ct).ConfigureAwait(false);
-                }
-
-                return result;
-            };
-
-            var behaviorOrder = BuildBehaviorOrder(behaviorList);
-
-            var aggregate = handlerDelegate;
-            for (var index = 0; index < behaviorOrder.Length; index++)
-            {
-                var behavior = behaviorList[behaviorOrder[index]];
-                var next = aggregate;
-                aggregate = ct => behavior.Handle(request, next, ct);
+                await Await(pre.Handle(request, cancellationToken), pre).ConfigureAwait(false);
             }
 
-            return await aggregate(cancellationToken).ConfigureAwait(false);
+            var directResult = await Await(handler.Handle(request, cancellationToken), handler).ConfigureAwait(false);
+
+            foreach (var post in postList)
+            {
+                await Await(post.Handle(request, directResult, cancellationToken), post).ConfigureAwait(false);
+            }
+
+            return directResult;
         }
-        catch (OperationCanceledException)
+
+        RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
         {
-            throw;
-        }
-        catch (Exception exception)
+            foreach (var pre in preList)
+            {
+                await Await(pre.Handle(request, ct), pre).ConfigureAwait(false);
+            }
+
+            var result = await Await(handler.Handle(request, ct), handler).ConfigureAwait(false);
+
+            foreach (var post in postList)
+            {
+                await Await(post.Handle(request, result, ct), post).ConfigureAwait(false);
+            }
+
+            return result;
+        };
+
+        var behaviorOrder = BuildBehaviorOrder(behaviorList);
+
+        var aggregate = handlerDelegate;
+        for (var index = 0; index < behaviorOrder.Length; index++)
         {
-            return await HandleExceptionAsync<TRequest, TResponse>(request, exception, serviceProvider, cancellationToken).ConfigureAwait(false);
+            var behavior = behaviorList[behaviorOrder[index]];
+            var next = aggregate;
+            aggregate = ct => behavior.Handle(request, next, ct);
         }
+
+        return await Await(aggregate(cancellationToken), behaviorList[behaviorOrder[0]]).ConfigureAwait(false);
     }
 
-    private static async Task<TResponse> HandleExceptionAsync<TRequest, TResponse>(
+    /// <summary>
+    /// Offers <paramref name="exception"/> to the registered
+    /// <see cref="IRequestExceptionHandler{TRequest, TResponse}"/> instances and returns the
+    /// substituted response, or rethrows the original exception with its stack trace intact.
+    /// </summary>
+    public static async Task<TResponse> HandleExceptionAsync<TRequest, TResponse>(
         TRequest request,
         Exception exception,
         IServiceProvider serviceProvider,
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
-        var exceptionHandlers = serviceProvider
-            .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
-            .ToArray();
+        IRequestExceptionHandler<TRequest, TResponse>[] exceptionHandlers;
+        try
+        {
+            exceptionHandlers = serviceProvider
+                .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
+                .ToArray();
+        }
+        catch (Exception)
+        {
+            // The exception handlers themselves could not be constructed. That is a wiring defect,
+            // and surfacing it would replace the real request failure — the thing the caller
+            // actually needs to see — with an unrelated DI error. Preserve the original exception.
+            ExceptionDispatchInfo.Capture(exception).Throw();
+            throw;
+        }
 
         if (exceptionHandlers.Length == 0)
         {
@@ -110,7 +125,12 @@ internal static class RequestHandlerPipeline
             var exceptionHandler = exceptionHandlers[index];
             try
             {
-                await exceptionHandler.Handle(request, exception, state, cancellationToken).ConfigureAwait(false);
+                await Await(exceptionHandler.Handle(request, exception, state, cancellationToken), exceptionHandler)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception handlerException)
             {
@@ -135,6 +155,32 @@ internal static class RequestHandlerPipeline
         return default!;
     }
 
+    /// <summary>
+    /// Awaits a user-supplied <see cref="Task"/> and turns the "handler forgot to return a Task"
+    /// mistake into an actionable error instead of a bare <see cref="NullReferenceException"/>.
+    /// </summary>
+    private static async Task Await(Task? task, object source)
+    {
+        if (task is null)
+        {
+            throw new InvalidOperationException(
+                $"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
+        }
+
+        await task.ConfigureAwait(false);
+    }
+
+    private static async Task<T> Await<T>(Task<T>? task, object source)
+    {
+        if (task is null)
+        {
+            throw new InvalidOperationException(
+                $"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
+        }
+
+        return await task.ConfigureAwait(false);
+    }
+
     private static int[] BuildBehaviorOrder<TRequest, TResponse>(
         IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
         where TRequest : IRequest<TResponse>
@@ -145,15 +191,20 @@ internal static class RequestHandlerPipeline
             return [0];
         }
 
-        var order = new int[count];
+        // Snapshot Order exactly once per request. Reading it inside the comparison would call the
+        // property O(n log n) times and, if the value is not stable, could make Array.Sort see an
+        // inconsistent ordering.
+        var orders = new int[count];
         for (var i = 0; i < count; i++)
         {
-            order[i] = i;
+            orders[i] = behaviors[i].Order;
         }
+
+        var order = IdentityOrder(count);
 
         Array.Sort(order, (a, b) =>
         {
-            var cmp = behaviors[b].Order.CompareTo(behaviors[a].Order);
+            var cmp = orders[b].CompareTo(orders[a]);
             // v4 contract: for equal Order the first registered behavior becomes the
             // outermost one and runs first (FIFO, like MediatR / ASP.NET Core middleware).
             // The wrapping loop consumes this list left to right, so reverse the tie
@@ -174,17 +225,31 @@ internal static class RequestHandlerPipeline
             return [0];
         }
 
+        // Snapshot once per resolution for the same reason as the behavior order above.
+        var orders = new int[count];
+        for (var i = 0; i < count; i++)
+        {
+            orders[i] = handlers[i].Order;
+        }
+
+        var order = IdentityOrder(count);
+
+        Array.Sort(order, (a, b) =>
+        {
+            var cmp = orders[a].CompareTo(orders[b]);
+            return cmp != 0 ? cmp : a.CompareTo(b);
+        });
+
+        return order;
+    }
+
+    private static int[] IdentityOrder(int count)
+    {
         var order = new int[count];
         for (var i = 0; i < count; i++)
         {
             order[i] = i;
         }
-
-        Array.Sort(order, (a, b) =>
-        {
-            var cmp = handlers[a].Order.CompareTo(handlers[b].Order);
-            return cmp != 0 ? cmp : a.CompareTo(b);
-        });
 
         return order;
     }

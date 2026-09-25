@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using SimpleMediator;
 using SimpleMediator.Interfaces;
 
+using SimpleMediator.Core;
 namespace SimpleMediator.IntegrationTest;
 
 public sealed class GenericHostIntegrationTests
@@ -37,12 +38,37 @@ public sealed class GenericHostIntegrationTests
     public async Task GenericHost_RejectsMediatorUseFromRoot_WhenScopeValidationIsEnabled()
     {
         using var host = CreateHost();
-        var mediator = host.Services.GetRequiredService<IMediator>();
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => mediator.Send(new IntegrationScopeRequest()));
+        // The guard fires while the mediator is being resolved, not later while a handler runs.
+        // That is deliberate: a root-owned mediator is a composition mistake, and surfacing it at
+        // startup beats discovering it through a scoped-service error on live traffic.
+        var exception = Assert.Throws<MediatorScopeException>(
+            () => host.Services.GetRequiredService<IMediator>());
 
+        Assert.Contains("root service provider", exception.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("scoped", exception.Message, StringComparison.OrdinalIgnoreCase);
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task GenericHost_MediatorScopeHelper_ProvidesAScopedMediator()
+    {
+        using var host = CreateHost();
+        await host.StartAsync();
+
+        try
+        {
+            // The supported pattern for a long-lived component: one scope per unit of work.
+            await using var mediatorScope = host.Services.CreateMediatorScope();
+
+            var result = await mediatorScope.Mediator.Send(new IntegrationScopeRequest());
+
+            Assert.NotEqual(Guid.Empty, result);
+        }
+        finally
+        {
+            await host.StopAsync();
+        }
     }
 
     [Fact]
@@ -79,12 +105,14 @@ public sealed class GenericHostIntegrationTests
         try
         {
             var probe = host.Services.GetRequiredService<AsyncDisposeProbe>();
-            using var scope = host.Services.CreateScope();
-            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            using (var scope = host.Services.CreateScope())
+            {
+                var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+                var result = await mediator.Send(new IntegrationOpenGenericRequest<int>(42));
+                Assert.Equal(42, result);
+                Assert.Equal(0, probe.DisposeCount);
+            }
 
-            var result = await mediator.Send(new IntegrationOpenGenericRequest<int>(42));
-
-            Assert.Equal(42, result);
             Assert.Equal(1, probe.DisposeCount);
         }
         finally

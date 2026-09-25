@@ -24,7 +24,7 @@ internal static class MediatorRegistrationValidator
         {
             if (group.Count() > 1)
             {
-                throw new InvalidOperationException(
+                throw new Core.RequestHandlerResolutionException(
                     $"Multiple request handlers registered for '{group.Key.FullName}'. A request can only have one handler.");
             }
         }
@@ -40,7 +40,85 @@ internal static class MediatorRegistrationValidator
         ValidateScannedOpenGenericHandlers(services);
         ValidateOpenGenericRegistrations(services);
         ValidateConcreteImplementations(services);
+        // Structural, and cheap enough to always run: a singleton custom-mapped handler holding a
+        // scoped dependency is a guaranteed production failure, so it must not wait for opt-in
+        // validation the way duplicate-handler conflicts do.
+        ValidateSingletonCustomOpenGenericHandlers(services);
     }
+
+    /// <summary>
+    /// A custom-mapped open-generic request handler is activated by SimpleMediator rather than by
+    /// the container, so a <see cref="ServiceLifetime.Singleton"/> registration cannot be honoured
+    /// the way DI honours it for closed handlers: the handler is built once and reused forever, and
+    /// any scoped or transient constructor dependency it captures stays alive after the scope that
+    /// produced it has been disposed. Reject that combination at startup with an actionable message
+    /// instead of shipping a handler that holds a disposed <c>DbContext</c>.
+    /// </summary>
+    private static void ValidateSingletonCustomOpenGenericHandlers(IServiceCollection services)
+    {
+        var configuration = GetConfiguration(services);
+        if (configuration is null)
+        {
+            return;
+        }
+
+        foreach (var registration in configuration.CustomOpenGenericRequestHandlers
+                     .DistinctBy(item => item.ImplementationType))
+        {
+            if (registration.Lifetime != ServiceLifetime.Singleton)
+            {
+                continue;
+            }
+
+            var handlerType = registration.ImplementationType;
+            var constructor = handlerType.GetConstructors(BindingFlags.Instance | BindingFlags.Public)
+                                   .OrderByDescending(candidate => candidate.GetParameters().Length)
+                                   .FirstOrDefault();
+            if (constructor is null)
+            {
+                continue;
+            }
+
+            foreach (var parameter in constructor.GetParameters())
+            {
+                // A generic parameter (for example TDependency) can only be closed later, so its
+                // lifetime cannot be checked here. Such a handler must be registered as Scoped.
+                if (parameter.ParameterType.ContainsGenericParameters)
+                {
+                    throw new InvalidOperationException(
+                        $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
+                        $"constructor depends on the open generic type '{parameter.ParameterType.Name}'. A singleton " +
+                        "custom-mapped open-generic handler cannot have a lifetime that is only known once the type is " +
+                        "closed. Use ServiceLifetime.Scoped (or Transient) for this handler, or register it as a closed type.");
+                }
+
+                var descriptor = services.FirstOrDefault(candidate =>
+                    candidate.ServiceType == parameter.ParameterType);
+                if (descriptor is null)
+                {
+                    continue;
+                }
+
+                if (descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient)
+                {
+                    throw new InvalidOperationException(
+                        $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
+                        $"constructor depends on '{parameter.ParameterType.FullName}', which is registered as " +
+                        $"{descriptor.Lifetime}. SimpleMediator builds this handler once and reuses it for the whole " +
+                        "application, so it would capture — and outlive — that dependency, handing out a disposed " +
+                        "instance to later requests. Use ServiceLifetime.Scoped (or Transient) for this handler, or " +
+                        "register a closed handler instead.");
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validates that closed request handlers do not conflict with native open-generic DI
+    /// registrations. Behavior lifetime conflicts are detected earlier, in
+    /// <see cref="ServiceCollectionExtensions.AddBehavior"/>, because <c>TryAddEnumerable</c> would
+    /// otherwise discard the second descriptor before any validator could see it.
+    /// </summary>
 
     private static void ValidateScannedOpenGenericHandlers(IServiceCollection services)
     {
@@ -50,8 +128,9 @@ internal static class MediatorRegistrationValidator
             return;
         }
 
-        foreach (var openHandler in configuration.CustomOpenGenericRequestHandlers.Distinct())
+        foreach (var registration in configuration.CustomOpenGenericRequestHandlers.DistinctBy(item => item.ImplementationType))
         {
+            var openHandler = registration.ImplementationType;
             ValidateOpenGenericImplementation(openHandler);
 
             if (!OpenGenericMatcher.CanInferOpenGenericRequestHandler(openHandler))
@@ -76,11 +155,12 @@ internal static class MediatorRegistrationValidator
         foreach (var group in requestHandlerGroups)
         {
             var typeArguments = group.Key.GetGenericArguments();
-            foreach (var openHandler in configuration.CustomOpenGenericRequestHandlers)
+            foreach (var registration in configuration.CustomOpenGenericRequestHandlers)
             {
+                var openHandler = registration.ImplementationType;
                 if (OpenGenericMatcher.TryClose(openHandler, typeArguments[0], typeArguments[1], out _))
                 {
-                    throw new InvalidOperationException(
+                    throw new Core.RequestHandlerResolutionException(
                         $"Request '{typeArguments[0].FullName}' is matched by both a closed handler and the open-generic handler " +
                         $"'{openHandler.FullName}'. A request can only have one handler.");
                 }
@@ -106,7 +186,7 @@ internal static class MediatorRegistrationValidator
 
             if (matchingOpenHandler is not null)
             {
-                throw new InvalidOperationException(
+                throw new Core.RequestHandlerResolutionException(
                     $"Request '{typeArguments[0].FullName}' is matched by both a closed handler and the native open-generic DI handler " +
                     $"'{matchingOpenHandler.FullName}'. A request can only have one handler.");
             }

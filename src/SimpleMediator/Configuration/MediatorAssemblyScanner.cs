@@ -15,15 +15,17 @@ internal static class MediatorAssemblyScanner
 {
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
-    internal static List<Type> ScanAndRegister(IServiceCollection services, SimpleMediatorOptions options)
+    internal static List<OpenGenericHandlerRegistration> ScanAndRegister(IServiceCollection services, SimpleMediatorOptions options)
     {
         // Keep only request handlers that need custom type-argument inference. Handlers whose
         // implementation parameters line up with IRequestHandler<TRequest, TResponse> are
         // registered through native DI and inherit its lifetime and decoration semantics.
-        var customOpenGenericRequestHandlers = new List<Type>();
+        var customOpenGenericRequestHandlers = new List<OpenGenericHandlerRegistration>();
 
         foreach (var assembly in options.Assemblies)
         {
+            options.AssemblyFilters.TryGetValue(assembly, out var filter);
+
             Type[] types;
             try
             {
@@ -43,9 +45,31 @@ internal static class MediatorAssemblyScanner
                          .Where(type => !type.IsAbstract && !type.IsInterface)
                          .OrderBy(type => type.FullName, StringComparer.Ordinal))
             {
+                if (filter is not null && !filter(type))
+                {
+                    continue;
+                }
+
+                // An open generic nested inside a generic type (Outer<T>.Handler<TU>) can never be
+                // closed: no caller can supply Outer<T>'s argument, so neither Microsoft DI nor the
+                // custom matcher can produce a usable instance. Skip it rather than failing the whole
+                // composition root over a type that is unreachable by design. Plain nested types
+                // (Outer.Handler<TU>) stay discoverable.
+                if (type.IsGenericTypeDefinition && type.DeclaringType is { ContainsGenericParameters: true })
+                {
+                    continue;
+                }
+
                 if (type.IsGenericTypeDefinition)
                 {
                     RegisterOpenGenericType(services, type, options.DefaultLifetime, customOpenGenericRequestHandlers);
+                    continue;
+                }
+
+                // Any other type that still has unbound generic parameters cannot be instantiated
+                // by the container either.
+                if (type.ContainsGenericParameters)
+                {
                     continue;
                 }
 
@@ -72,7 +96,7 @@ internal static class MediatorAssemblyScanner
         IServiceCollection services,
         Type type,
         ServiceLifetime lifetime,
-        List<Type> customOpenGenericRequestHandlers)
+        List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers)
     {
         var implementedInterfaces = type.GetInterfaces()
             .Where(implementedInterface => implementedInterface.IsGenericType)
@@ -114,9 +138,9 @@ internal static class MediatorAssemblyScanner
                 "Every implementation type parameter must appear in the request or response pattern, or the handler must be registered as a closed type.");
         }
 
-        if (!customOpenGenericRequestHandlers.Contains(type))
+        if (!customOpenGenericRequestHandlers.Any(registration => registration.ImplementationType == type))
         {
-            customOpenGenericRequestHandlers.Add(type);
+            customOpenGenericRequestHandlers.Add(new OpenGenericHandlerRegistration(type, lifetime));
         }
     }
 

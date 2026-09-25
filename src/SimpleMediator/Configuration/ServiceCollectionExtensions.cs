@@ -1,8 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using SimpleMediator.Core;
 using SimpleMediator.Interfaces;
+using SimpleMediator.Core;
 
 namespace SimpleMediator;
 
@@ -57,6 +57,8 @@ public static class ServiceCollectionExtensions
         // Transient registration ensures a mediator resolved inside a scope uses that scope's
         // provider, even when handler lifetimes are configured as singleton.
         services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
+        services.TryAddScoped<OpenGenericScopedLifetimeStore>();
+        services.TryAddSingleton<OpenGenericSingletonLifetimeStore>();
 
         var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
         var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers);
@@ -104,7 +106,7 @@ public static class ServiceCollectionExtensions
         {
             if (behaviorType.IsGenericTypeDefinition)
             {
-                services.TryAddEnumerable(new ServiceDescriptor(typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime));
+                AddBehavior(services, typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime);
                 continue;
             }
 
@@ -115,9 +117,29 @@ public static class ServiceCollectionExtensions
 
             foreach (var closedInterface in closedInterfaces)
             {
-                services.TryAddEnumerable(new ServiceDescriptor(closedInterface, behaviorType, options.DefaultLifetime));
+                AddBehavior(services, closedInterface, behaviorType, options.DefaultLifetime);
             }
         }
+    }
+
+    private static void AddBehavior(IServiceCollection services, Type serviceType, Type behaviorType, ServiceLifetime lifetime)
+    {
+        // TryAddEnumerable keeps the FIRST registration for a (service type, implementation type)
+        // pair and silently discards later ones, so the effective lifetime would otherwise depend on
+        // module ordering. Detect the conflict before the descriptor is dropped.
+        var existing = services.LastOrDefault(descriptor =>
+            descriptor.ServiceType == serviceType && descriptor.ImplementationType == behaviorType);
+
+        if (existing is not null && existing.Lifetime != lifetime)
+        {
+            throw new InvalidOperationException(
+                $"Pipeline behavior '{behaviorType.FullName}' is registered for '{serviceType.FullName}' with conflicting " +
+                $"lifetimes ({existing.Lifetime} and {lifetime}). A behavior can only be registered once per " +
+                "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
+                "configuration.");
+        }
+
+        services.TryAddEnumerable(new ServiceDescriptor(serviceType, behaviorType, lifetime));
     }
 
     private static void ValidateOptions(SimpleMediatorOptions options)
@@ -138,7 +160,7 @@ public static class ServiceCollectionExtensions
     private static MediatorConfiguration MergeConfiguration(
         IServiceCollection services,
         SimpleMediatorOptions options,
-        List<Type> customOpenGenericRequestHandlers)
+        List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers)
     {
         var existingDescriptor = services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(MediatorConfiguration));
 
@@ -154,7 +176,8 @@ public static class ServiceCollectionExtensions
 
             var mergedHandlers = existing.CustomOpenGenericRequestHandlers
                 .Concat(customOpenGenericRequestHandlers)
-                .Distinct()
+                .GroupBy(registration => registration.ImplementationType)
+                .Select(group => group.Last())
                 .ToList();
 
             var validationRequested = existing.ValidationRequested || options.ValidateOnBuild;
@@ -162,7 +185,8 @@ public static class ServiceCollectionExtensions
                 strategy,
                 mergedHandlers,
                 capacity,
-                validationRequested);
+                validationRequested,
+                existing.RequireScopedMediator && options.RequireScopedMediator);
 
             services.Remove(existingDescriptor);
             services.AddSingleton(configuration);
@@ -173,7 +197,8 @@ public static class ServiceCollectionExtensions
             options.NotificationPublishStrategy,
             customOpenGenericRequestHandlers,
             options.OpenGenericResolutionCacheCapacity,
-            options.ValidateOnBuild);
+            options.ValidateOnBuild,
+            options.RequireScopedMediator);
         services.AddSingleton(initialConfiguration);
         return initialConfiguration;
     }

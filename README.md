@@ -13,7 +13,7 @@ SimpleMediator is designed to be fast, reliable, and "DI-friendly", following mo
 ## Core Features & Optimizations
 
 - **🚀 High Performance Dispatch**: Uses cached **Compiled Expression Trees** (MSIL) for mediator wrapper dispatch, while handler instances are still resolved correctly through Microsoft Dependency Injection.
-- **🛡️ Native Scope Support**: Correctly respects the surrounding Dependency Injection scope for DI-registered services. Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers.
+- **🛡️ Enforced Scope Correctness**: Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers, and resolving `IMediator` from the root provider — which would silently turn every one of them into a process-wide singleton — is rejected at startup. See [Resolve the mediator from a scope](#2-resolve-the-mediator-from-a-scope-not-from-the-root).
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
@@ -41,7 +41,7 @@ services.AddSimpleMediator(options =>
     // Scan for request, notification, pre/post, and exception handlers.
     options.RegisterAssembly(typeof(Program).Assembly);
     // Register pipeline behaviors explicitly with AddBehavior.
-    
+
     // Optionally change the default lifetime (default is Scoped)
     options.DefaultLifetime = ServiceLifetime.Scoped;
 });
@@ -49,7 +49,64 @@ services.AddSimpleMediator(options =>
 var serviceProvider = services.BuildServiceProvider();
 ```
 
-In a long-running application, resolve and use `IMediator` inside the request/operation scope. Do not capture a mediator resolved from the root provider in a singleton or background service; the mediator intentionally uses the provider it was resolved from. For production hosts, enable the host's scope/build validation and set `options.ValidateOnBuild = true` where appropriate.
+### 2. Resolve the mediator from a scope (not from the root)
+
+This is a **hard requirement**, not a style preference.
+
+`IMediator` resolves every handler, pre/post handler, behavior, and exception handler from the
+provider it was created with. A mediator created from the **root** provider therefore resolves
+scoped services — your `DbContext`, unit of work, tenant context, current-user accessor — from the
+root, where MS DI treats them as one process-wide instance shared by every concurrent request. The
+failure is silent: nothing throws, you just get a non-thread-safe context serving all traffic.
+
+```csharp
+// Correct: one scope per HTTP request (ASP.NET Core does this for you when you inject IMediator
+// into a controller or minimal-API endpoint).
+using var scope = serviceProvider.CreateScope();
+var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+await mediator.Send(new PingRequest("Hello"));
+```
+
+Resolving `IMediator` from the root provider throws `MediatorScopeException` while the mediator is
+being resolved, so the mistake surfaces at startup rather than under load. To accept the
+root-owned trade-off deliberately — only correct when *every* handler dependency is a singleton —
+set:
+
+```csharp
+services.AddSimpleMediator(options => options.RequireScopedMediator = false);
+```
+
+#### Long-lived components: background services, hosted services, queue consumers
+
+Inject `IServiceScopeFactory` (not `IMediator`) and create a scope per unit of work. The
+`CreateMediatorScope()` helper owns the scope and the mediator together so they cannot drift apart:
+
+```csharp
+public sealed class OrderConsumer(IServiceScopeFactory scopeFactory, ILogger<OrderConsumer> log)
+    : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var order in ReadOrdersAsync(stoppingToken))
+        {
+            // One scope per message: scoped dependencies are created and released with it.
+            await using var mediatorScope = scopeFactory.CreateMediatorScope();
+            await mediatorScope.Mediator.Send(new ProcessOrder(order), stoppingToken);
+        }
+    }
+}
+```
+
+`CreateMediatorScope()` has overloads for both `IServiceProvider` and `IServiceScopeFactory`, and
+the returned `IMediatorScope` exposes `Mediator` and `ServiceProvider` and implements both
+`IDisposable` and `IAsyncDisposable`.
+
+> **How the check works.** MS DI gives the root provider and every scope the same runtime type, so
+> the discriminator is the scope factory: `IServiceScopeFactory` always resolves to the container's
+> root scope, and a service resolved *from* the root scope is handed that exact object. The
+> comparison is advisory by design — a container that wires the scope factory differently simply
+> does not trigger the guard instead of rejecting a valid mediator.
+
 
 ## Usage
 
@@ -74,7 +131,7 @@ var response = await mediator.Send(new PingRequest("Hello"));
 > **AOT/trimming:** the public `IMediator`/`Mediator` dispatch methods are annotated because
 > wrapper creation uses reflection and runtime code generation. SimpleMediator currently targets
 > JIT hosts; Native AOT and trimming are not supported without an application-specific verification
-> strategy.
+> strategy. See [AOT & Trimming](#aot--trimming) for what this means for a trimming-enabled build.
 
 > **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
 
@@ -94,7 +151,7 @@ await mediator.Publish(new UserCreated("user@example.com"));
 ```
 
 #### Dispatch strategy
-By default handlers run **sequentially** (`NotificationPublishStrategy.Sequential`). This is the safe choice: all handlers share the same DI scope, so a scoped, non-thread-safe service (e.g. `DbContext`) is never touched concurrently. If a handler throws, the remaining handlers are not invoked. Every notification handler must return a non-null `Task`; returning `null` fails with `InvalidOperationException` in sequential mode and follows the same single-failure contract in parallel mode.
+Publishing a notification with **no** registered handler is a silent no-op, not an error. By default handlers run **sequentially** (`NotificationPublishStrategy.Sequential`). This is the safe choice: all handlers share the same DI scope, so a scoped, non-thread-safe service (e.g. `DbContext`) is never touched concurrently. If a handler throws, the remaining handlers are not invoked. Every notification handler must return a non-null `Task`; returning `null` fails with `InvalidOperationException` in sequential mode and follows the same single-failure contract in parallel mode.
 
 Opt into parallel dispatch only when handlers are independent:
 
@@ -127,7 +184,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 }
 ```
 
-Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost). Equal values run in registration order (FIFO): the first registered behavior is outermost and runs first, like MediatR and ASP.NET Core middleware. `Order` is read from the current behavior instances on each request, so it may depend on scoped state. Assembly scanning does not register behaviors; add each one explicitly. You can register an open generic type or a closed type bound to a specific request/response pair:
+Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost). Equal values run in registration order (FIFO): the first registered behavior is outermost and runs first, like MediatR and ASP.NET Core middleware. `Order` is a default interface member defaulting to `0`, so a behavior may omit it entirely; `IRequestExceptionHandler<,>.Order` has the same default, so both ordering contracts behave identically. Assembly scanning does not register behaviors; add each one explicitly. You can register an open generic type or a closed type bound to a specific request/response pair:
 
 ```csharp
 services.AddSimpleMediator(options =>
@@ -137,6 +194,16 @@ services.AddSimpleMediator(options =>
     options.AddBehavior(typeof(MySpecificBehavior)); // closed, implements IPipelineBehavior<MyRequest, MyResponse>
 });
 ```
+
+`Order` is read **once per request**, so it may depend on scoped state, but it must be *stable for
+the duration of a single request*: the pipeline snapshots the values and then sorts, instead of
+re-reading the property on every comparison. A behavior whose `Order` changes between reads cannot
+produce an inconsistent sort.
+
+Registering the same behavior type for the same request/response pair **twice with different
+lifetimes** is reported as a configuration error rather than silently resolved. `TryAddEnumerable`
+keeps the first registration and discards the second, which would otherwise make the effective
+lifetime depend on module registration order.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.
@@ -172,14 +239,45 @@ public class GenericHandler<TRequest, TResponse> : IRequestHandler<TRequest, TRe
 }
 ```
 
-Native-compatible handlers are registered as ordinary open-generic DI services. They follow `DefaultLifetime`, are disposed by the container, and behave exactly like closed handlers. Custom-mapped handlers such as `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>` cannot be closed by Microsoft DI, so they use SimpleMediator's type-argument matcher and are activated per request outside the native registration path.
+Native-compatible handlers are registered as ordinary open-generic DI services. They follow `DefaultLifetime`, are disposed by the container, and behave exactly like closed handlers. Custom-mapped handlers such as `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>` cannot be closed by Microsoft DI, so they use SimpleMediator's type-argument matcher and are activated by SimpleMediator itself, outside the native registration path.
 
-> **Lifetime:** custom-mapped open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. `DefaultLifetime` applies to closed handlers, native-compatible open-generic request handlers, notification/pre/post/exception handlers, and behaviors registered through native DI. For custom-mapped handlers the resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. Because these handlers are activated outside the native DI registration path, SimpleMediator disposes the handler at the end of the request when it implements `IDisposable` or `IAsyncDisposable`. If you need a specific lifetime for a custom-mapped handler itself, register a closed handler instead. Handler decoration is not supported by the single-handler resolver; use `IPipelineBehavior<,>` for cross-cutting concerns.
+> **Lifetime of custom-mapped open-generic handlers.** These follow `DefaultLifetime` exactly like
+> every other handler. Concretely:
+>
+> | `DefaultLifetime` | Where the instance lives | Built from | Disposed by |
+> |---|---|---|---|
+> | `Transient` (not the default) | one per `Send` | the current scope | SimpleMediator, at the end of the request |
+> | `Scoped` (the default) | one per DI scope | the current scope | the scope |
+> | `Singleton` | one per application | **the root provider** | the root provider |
+>
+> Only the *resolution plan* (the closed type plus its factory) is cached, never the instance, so
+> scoped dependencies stay correct across requests.
+>
+> The `Singleton` row is the subtle one. A singleton custom-mapped handler is built once and reused
+> forever, so it must not be built from a request scope: it would capture that scope's `DbContext`
+> and keep handing out an instance whose scope was already disposed. SimpleMediator therefore builds
+> singleton custom handlers from the **root** provider, and — because "the root scope's `DbContext`
+> shared for the whole process" is almost never what an application wants — it **rejects** a singleton
+> custom-mapped handler whose constructor takes a `Scoped` or `Transient` dependency:
+>
+> ```
+> Open-generic request handler 'MyHandler<T>' is registered as a Singleton, but its constructor
+> depends on 'AppDbContext', which is registered as Scoped. ... Use ServiceLifetime.Scoped
+> (or Transient) for this handler, or register a closed handler instead.
+> ```
+>
+> This check runs on every `AddSimpleMediator` call, not only under `ValidateOnBuild`. A handler
+> depending on a type parameter it will only learn once closed (for example
+> `Handler<T>(IRepo<T> repo)`) is rejected for the same reason: its lifetime is unknowable up front.
+>
+> Handler decoration is not supported by the single-handler resolver; use `IPipelineBehavior<,>` for
+> cross-cutting concerns.
+
 
 > **Matcher scope:** type-argument inference covers the common shapes — direct parameters (`IRequestHandler<Query<T>, Result<T>>`), nested generics, and single-dimension arrays (`IRequestHandler<ArrayRequest<T>, T[]>`). It is a deliberately simplified unifier; exotic signatures (multi-dimensional arrays, by-ref/pointer types, deeply mixed constructions) may not resolve. Unsupported open-generic mappings are rejected during registration. When in doubt, register a closed handler. Startup validation checks ambiguities for closed request types represented in the service registrations; it cannot predict every request type an application may send.
 
 ### Exception Handlers
-Recover from (or observe) exceptions thrown anywhere in a request's pipeline — the handler, its pre/post handlers, or any behavior.
+Recover from (or observe) exceptions thrown anywhere in a request's processing — the handler, its pre/post handlers, any behavior, **and the construction of any of them**.
 
 ```csharp
 public class ValidationExceptionHandler : IRequestExceptionHandler<CreateUser, UserResult>
@@ -193,9 +291,45 @@ public class ValidationExceptionHandler : IRequestExceptionHandler<CreateUser, U
 }
 ```
 
-Handlers run in **ascending `Order`** (the `IRequestExceptionHandler<,>.Order` property, default `0`); equal values preserve DI resolution order. The value is read from the current handler instances when an exception occurs, so it may depend on scoped state. The first handler to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning. Since assembly discovery order is not guaranteed, assign distinct values when scanned handlers need a fixed relative order.
+Handlers run in **ascending `Order`** (a default interface member, default `0`); equal values preserve DI resolution order. The value is read once per resolution, so it may depend on scoped state. The first handler to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning. Assembly scanning orders candidate types by `FullName`, so discovery is deterministic; still, assign distinct `Order` values when a fixed relative order matters.
 
 If an exception handler itself throws, the mediator throws an `AggregateException` containing both the original request exception and the exception-handler failure.
+
+#### Exactly what reaches an exception handler
+
+This is worth being precise about, because a global catch-all is often used for logging and metrics
+and silently misses some failures.
+
+| Failure | Routed to `IRequestExceptionHandler<,>`? |
+|---|---|
+| The handler's `Handle` throws | yes |
+| A pre-handler, post-handler, or behavior's `Handle` throws | yes |
+| A behavior's `Handle` returns `null` | yes |
+| **A behavior, pre/post handler, or request handler fails to be constructed** (missing dependency, bad configuration, throwing constructor) | **yes** |
+| A handler returns `null` instead of a `Task` | yes, as an `InvalidOperationException` naming the handler |
+| `OperationCanceledException` from anywhere | **no** — cancellation is control flow, never offered |
+| No handler, or more than one handler, matches the request | **no** — see below |
+| The exception handlers themselves cannot be constructed | **no** — the original exception wins |
+
+**Handler selection is not a request failure.** `RequestHandlerResolutionException` (an
+`InvalidOperationException`) is raised when no handler or more than one handler matches. It is
+deliberately *not* offered to exception handlers: letting a catch-all observe it would hide a wiring
+bug behind whatever substitute response the handler returns, and an exception handler that cannot
+itself be constructed would replace a precise diagnostic with an unrelated DI error. The same
+exception type is raised by the startup validators, so `ValidateOnBuild` and the first failing
+request report identical wording.
+
+**A broken exception pipeline never masks the request failure.** If the
+`IRequestExceptionHandler<,>` instances cannot themselves be resolved, the original request
+exception is rethrown rather than being replaced by the DI error — the caller still sees the thing
+that actually went wrong.
+
+> **Partial commits.** An exception handler can substitute a response for a request whose handler
+> has *already* committed work (for example a `POST` handler succeeded and a post-handler then
+> failed). SimpleMediator offers no transaction or outbox, and the substitution is not a rollback:
+> the caller receives a "successful" shape while the write stands. Use a behavior that opens a
+> transaction around `next(ct)`, or an outbox, if you need atomicity.
+
 
 > **Cancellation is never swallowed:** an `OperationCanceledException` is treated as control flow, not as an error — it is *never* offered to `IRequestExceptionHandler<,>` and propagates straight to the caller, regardless of whether the cancellation originated from the request's own `CancellationToken` or from a linked/alien token a behavior or handler observed. Likewise, when notification handlers run in `Parallel` and every faulted handler throws `OperationCanceledException` while the supplied token is cancelled, `Publish` surfaces the `OperationCanceledException` itself rather than an `AggregateException` wrapping it.
 
@@ -213,9 +347,62 @@ services.AddSimpleMediator(options =>
 services.ValidateSimpleMediator();
 ```
 
-Basic structural validation of open-generic mappings and concrete handler/behavior implementations runs during every `AddSimpleMediator` call. This includes checking that scanned open-generic request handlers have inferable mappings and a public constructor. `ValidateOnBuild` additionally enables the accumulated conflict checks below. Validation flags multiple registrations for the same closed `IRequestHandler<,>` (whether by type, factory, or instance), invalid open-generic service mappings, non-inferable open-generic request handlers, invalid concrete handler/behavior implementations, plus conflicts between a known closed request handler and either a scanned SimpleMediator open-generic handler or a native DI open-generic `IRequestHandler<,>` registration. It cannot validate request types absent from the closed registrations. For the complete constructor dependency graph, also enable the host provider's `ValidateOnBuild` and `ValidateScopes` options.
+Basic structural validation runs during **every** `AddSimpleMediator` call, with no opt-in:
 
-> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. Scanned types are ordered by `FullName` within each assembly so composition does not depend on reflection enumeration order. Explicitly configured `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` override previous values; a later call that leaves them at their defaults preserves the existing module configuration. Once `ValidateOnBuild` is enabled by any module—or `ValidateSimpleMediator()` is called explicitly—subsequent modular calls keep validation enabled so newly added registrations are checked as part of the accumulated composition.
+- open-generic mappings that Microsoft DI cannot close, and scanned open-generic request handlers with no inferable mapping;
+- concrete handler/behavior implementations that are abstract, non-public-constructor, or not activatable by DI;
+- a `Singleton` custom-mapped open-generic handler with a `Scoped` or `Transient` constructor dependency (see [Lifetimes of custom-mapped open-generic handlers](#open-generic-request-handlers));
+- a behavior registered twice for the same request/response pair with conflicting lifetimes.
+
+`ValidateOnBuild` (or an explicit `services.ValidateSimpleMediator()`) additionally enables the *conflict* checks, which are the ones that would otherwise surface on live traffic:
+
+- multiple registrations for the same closed `IRequestHandler<,>` (whether by type, factory, or instance);
+- a closed request handler that is *also* matched by a scanned SimpleMediator open-generic handler or by a native DI open-generic `IRequestHandler<,>` registration.
+
+Conflict validation can only see request types that have a closed registration; it cannot predict every request type an application may send. For the complete constructor dependency graph, also enable the host provider's `ValidateOnBuild` and `ValidateScopes`.
+
+> **Recommended for production:** set `options.ValidateOnBuild = true`. Without it, a duplicate handler or
+> an ambiguity surfaces as a `RequestHandlerResolutionException` on the *first request* that hits it
+> — i.e. in production, under load, on one endpoint.
+
+> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. Scanned types are ordered by `FullName` within each assembly so composition does not depend on reflection enumeration order. Explicitly configured `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` override previous values; a later call that leaves them at their defaults preserves the existing module configuration. `RequireScopedMediator` is sticky in the safe direction: it stays enabled if any module enabled it. Once `ValidateOnBuild` is enabled by any module—or `ValidateSimpleMediator()` is called explicitly—subsequent modular calls keep validation enabled so newly added registrations are checked as part of the accumulated composition.
+
+## Assembly Scanning Rules
+
+Scanning is indiscriminate within the assemblies you register, so it is worth knowing exactly what is
+considered and what is skipped.
+
+**Registered:** closed types implementing `IRequestHandler<,>`, `INotificationHandler<>`,
+`IPreRequestHandler<,>`, `IPostRequestHandler<,>`, or `IRequestExceptionHandler<,>`; open generic
+implementations of the same interfaces. A type implementing several of them is registered for each.
+
+**Skipped silently (never a startup error):**
+
+- an open generic **nested inside a generic type** — `Outer<T>.Handler<TU>`. Nothing in the
+  application can supply `Outer<T>`'s argument, so no caller can ever close it. Such a type used to
+  abort the whole composition root, which meant one unreachable type could take the application down
+  at startup.
+- any other type that still has unbound generic parameters.
+- anything excluded by a type filter.
+
+**Rejected:** an *inferable* open-generic request handler whose mapping Microsoft DI cannot close
+is registered through SimpleMediator's matcher; one that is not inferable is a configuration error.
+
+To exclude types from discovery — generated code, obsolete handlers, a composition-root type that
+happens to implement a handler interface — pass a filter:
+
+```csharp
+services.AddSimpleMediator(options =>
+{
+    options.RegisterAssembly(typeof(Program).Assembly, type => !type.IsDefined(typeof(ExcludeFromMediation)));
+    options.RegisterAssembly(typeof(Contracts).Assembly, type => type.Namespace?.StartsWith("App.Handlers") == true);
+});
+```
+
+Calling `RegisterAssembly` twice for the same assembly **narrows** the accepted set (both predicates
+must pass) rather than replacing the earlier one, so modular composition cannot silently re-admit a
+type another module excluded.
+
 
 ## Observability
 SimpleMediator keeps the core limited to the DI abstractions dependency; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:
@@ -259,12 +446,26 @@ Repeatable microbenchmarks are provided in `benchmarks/SimpleMediator.Benchmarks
 dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks -- --filter '*MediatorBenchmarks*'
 ```
 
-The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
+The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. Both the mediator and the baseline handler are resolved from a scope, and the baseline handler is `async`, so the comparison isolates mediator dispatch overhead instead of measuring a completed task against a state machine. `MediatorSend_WithBehaviors` measures the cost of a three-behavior chain. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
 Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The implementation relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`, and the supported deployment target is classic JIT execution such as standard ASP.NET Core.
 
 `AddSimpleMediator`, `IMediator`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
+
+> **Consumer builds with trimming or AOT.** Those annotations mean a project with `PublishTrimmed`
+> or `PublishAot` **and** `TreatWarningsAsErrors` fails to compile on `AddSimpleMediator` and on
+> every `Send`/`Publish` call site, with `IL2026` and `IL3050`. If you are knowingly running
+> trimming/AOT and accept that handler types are not trim-safe, suppress them per project:
+>
+> ```xml
+> <PropertyGroup>
+>   <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
+> </PropertyGroup>
+> ```
+>
+> Suppressing the warning does not make trimming work: handlers reachable only through reflection
+> can still be trimmed away. Verify with an actual trimmed publish before relying on it.
 
 The package does not inject transitive global usings into consumer projects. Add `using SimpleMediator.Interfaces;` explicitly, or enable the namespace in the consuming project if desired.
 
@@ -274,6 +475,30 @@ SimpleMediator uses a **hybrid approach**:
 1. **Discovery**: Reflection is used once at startup to find handlers.
 2. **Compilation**: The first time a request or notification type is used, an **Expression Tree** is compiled into a cached wrapper factory. Concurrent first use is coalesced so only one factory is compiled per cache key.
 3. **Execution**: Subsequent calls reuse the cached wrapper factory, while actual handlers and pipeline services are resolved through Microsoft Dependency Injection so lifetimes and scopes remain correct.
+
+### What the performance actually consists of
+
+Per `Send`, on top of your handler's own work, SimpleMediator performs:
+
+- one bounded-cache lookup keyed by `(requestType, responseType)` — lock-free on the hot path;
+- `GetServices<IRequestHandler<,>>()` for handler selection plus one each for pre-handlers, post-handlers and behaviors: four resolutions, each materialising an array;
+- one handler delegate allocation plus one closure per behavior;
+- one `Order` snapshot and, only when registration order is not already correct, one sort;
+- the async state machines of the behavior chain.
+
+The compiled-expression wrapper removes reflection from the *first* hop, but the per-request DI resolutions and delegate allocations dominate. Measure with the suite above rather than assuming a number.
+
+The wrapper caches are bounded (1024 entries, FIFO eviction) and hold `Type` keys, so types from a collectible `AssemblyLoadContext` can be retained until evicted. That is bounded and small, but a plugin host that unloads module ALCs will not see them collected immediately.
+
+## Known limitations
+
+- No Native AOT or trimming support (see above).
+- No `IStreamRequest` / `IAsyncEnumerable` request support.
+- No `IPipelineContext` equivalent, so there is no way to pass per-request services or arguments alongside a request; everything flows through the ambient `IServiceProvider` of the mediator's scope.
+- No handler decoration: one handler per request and no built-in decorator chain. Use `IPipelineBehavior<,>` for cross-cutting concerns.
+- Handler and notification matching is **exact**, not contravariant. A handler registered for a base request or notification does not receive derived ones, even though the interfaces are declared contravariant.
+- No per-request transaction or outbox; see [Partial commits](#exactly-what-reaches-an-exception-handler).
+- The root-mediator guard depends on how Microsoft DI wires `IServiceScopeFactory`. It is advisory by design and simply does not fire on a container that differs.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

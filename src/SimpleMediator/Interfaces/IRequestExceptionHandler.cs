@@ -37,10 +37,12 @@ public interface IRequestExceptionHandler<in TRequest, TResponse>
     where TRequest : IRequest<TResponse>
 {
     /// <summary>
-    /// Execution order: lower runs first. Defaults to <c>0</c>. Handlers with equal values
-    /// keep their DI resolution order. The value is read from the current instances whenever
-    /// an exception is handled. Assembly-scan discovery order is not guaranteed, so set
-    /// distinct values when the relative order of scanned handlers must be fixed.
+    /// Execution order: lower runs first. Defaults to <c>0</c>, like
+    /// <c>IPipelineBehavior&lt;TRequest, TResponse&gt;.Order</c>. Handlers with equal values
+    /// keep their DI resolution order. The value is read once per resolution, so it may depend on
+    /// scoped state, but it must be stable for the duration of a single resolution. When the
+    /// relative order of scanned handlers must be fixed, give them distinct values: assembly-scan
+    /// discovery order is stable by type name but is not a contract.
     /// </summary>
     int Order => 0;
 

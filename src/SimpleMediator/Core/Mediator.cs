@@ -20,10 +20,31 @@ public class Mediator : IMediator
     /// Initializes a new instance of the <see cref="Mediator"/> class.
     /// </summary>
     /// <param name="serviceProvider">The service provider used to resolve handlers and configuration.</param>
+    /// <exception cref="MediatorScopeException">
+    /// Thrown when <paramref name="serviceProvider"/> is the application's root provider and
+    /// <see cref="SimpleMediatorOptions.RequireScopedMediator"/> is enabled (the default).
+    /// </exception>
     public Mediator(IServiceProvider serviceProvider)
     {
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         var configuration = serviceProvider.GetService<MediatorConfiguration>();
+
+        // A mediator resolved from the root provider keeps using the root provider forever, so
+        // every scoped service it touches (DbContext, unit of work, tenant context) collapses into
+        // one process-wide instance shared by concurrent requests. Fail fast instead of letting
+        // that happen silently in production.
+        if (configuration is { RequireScopedMediator: true } &&
+            ServiceProviderScopeFacts.IsRootProvider(serviceProvider))
+        {
+            throw new MediatorScopeException(
+                "SimpleMediator resolved 'IMediator' from the root service provider. A root-owned mediator " +
+                "resolves handlers from the root provider, which turns every scoped service (for example a " +
+                "DbContext or a unit of work) into a single process-wide instance shared by concurrent requests. " +
+                "Resolve 'IMediator' inside the request or operation scope instead, for example: " +
+                "'using var scope = rootProvider.CreateScope(); var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();'. " +
+                "To accept this trade-off explicitly, set 'SimpleMediatorOptions.RequireScopedMediator = false'.");
+        }
+
         _requestHandlerWrappers = configuration?.RequestHandlerWrappers
             ?? new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
         _notificationHandlerWrappers = configuration?.NotificationHandlerWrappers
