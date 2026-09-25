@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Core;
 
@@ -23,14 +22,17 @@ internal sealed class MediatorConfiguration
 
     // Caches the *resolution plan* (matched closed types + compiled factories) per
     // request/response pair — never the handler instance, so scoped dependencies stay correct.
-    private readonly ConcurrentDictionary<(Type Request, Type Response), OpenGenericResolution> _resolutionCache = new();
+    private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _resolutionCache;
 
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
-        IReadOnlyList<Type>? openGenericRequestHandlers = null)
+        IReadOnlyList<Type>? openGenericRequestHandlers = null,
+        int resolutionCacheCapacity = 1024)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
         OpenGenericRequestHandlers = openGenericRequestHandlers ?? NoTypes;
+        _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
     }
 
     /// <summary>

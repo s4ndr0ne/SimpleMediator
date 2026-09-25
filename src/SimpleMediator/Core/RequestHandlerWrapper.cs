@@ -12,89 +12,93 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 {
     public override async Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var handler = ResolveHandler(serviceProvider);
-
-        var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
-        var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
-        var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
-
-        RequestHandlerDelegate<TResponse> handlerDelegate = async (ct) =>
-        {
-            foreach (var pre in preHandlers)
-            {
-                await pre.Handle((TRequest)request, ct).ConfigureAwait(false);
-            }
-
-            var result = await handler.Handle((TRequest)request, ct).ConfigureAwait(false);
-
-            foreach (var post in postHandlers)
-            {
-                await post.Handle((TRequest)request, result, ct).ConfigureAwait(false);
-            }
-
-            return result;
-        };
-
-        // Build the behavior chain: lowest Order is outermost (runs first).
-        var aggregate = behaviors
-            .OrderByDescending(b => b.Order)
-            .Aggregate(handlerDelegate, (next, behavior) => ct => behavior.Handle((TRequest)request, next, ct));
+        var handlerLease = ResolveHandler(serviceProvider);
 
         try
         {
-            return await aggregate(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            // Cancellation — whether from the request's own token or from a linked/alien
-            // token a behavior or handler wired up — is a control-flow signal, not an
-            // error. It is therefore never offered to IRequestExceptionHandler<,> and
-            // propagates straight to the caller, so a greedy handler cannot turn it
-            // into a substitute response.
-            throw;
-        }
-        catch (Exception exception)
-        {
-            // Give exception handlers a chance to recover. They wrap the whole pipeline
-            // (behaviors + pre/post + handler) and run in ascending Order; the first to
-            // SetHandled wins.
-            var exceptionHandlers = serviceProvider
-                .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
-                .OrderBy(h => h.Order);
-            var state = new RequestExceptionHandlerState<TResponse>();
+            var handler = handlerLease.Handler;
+            var preHandlers = serviceProvider.GetServices<IPreRequestHandler<TRequest, TResponse>>();
+            var postHandlers = serviceProvider.GetServices<IPostRequestHandler<TRequest, TResponse>>();
+            var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
-            foreach (var exceptionHandler in exceptionHandlers)
+            RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
             {
-                try
+                foreach (var pre in preHandlers)
                 {
-                    await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
+                    await pre.Handle((TRequest)request, ct).ConfigureAwait(false);
                 }
-                catch (Exception handlerException)
+
+                var result = await handler.Handle((TRequest)request, ct).ConfigureAwait(false);
+
+                foreach (var post in postHandlers)
                 {
-                    throw new AggregateException(
-                        "A request exception handler failed while handling the original request exception.",
-                        exception,
-                        handlerException);
+                    await post.Handle((TRequest)request, result, ct).ConfigureAwait(false);
+                }
+
+                return result;
+            };
+
+            // Build the behavior chain: lowest Order is outermost (runs first).
+            var aggregate = behaviors
+                .OrderByDescending(b => b.Order)
+                .Aggregate(handlerDelegate, (next, behavior) => ct => behavior.Handle((TRequest)request, next, ct));
+
+            try
+            {
+                return await aggregate(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancellation is control flow, not an error to offer to exception handlers.
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // Exception handlers wrap the whole pipeline and run in ascending Order.
+                var exceptionHandlers = serviceProvider
+                    .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
+                    .OrderBy(h => h.Order);
+                var state = new RequestExceptionHandlerState<TResponse>();
+
+                foreach (var exceptionHandler in exceptionHandlers)
+                {
+                    try
+                    {
+                        await exceptionHandler.Handle((TRequest)request, exception, state, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception handlerException)
+                    {
+                        throw new AggregateException(
+                            "A request exception handler failed while handling the original request exception.",
+                            exception,
+                            handlerException);
+                    }
+
+                    if (state.Handled)
+                    {
+                        break;
+                    }
                 }
 
                 if (state.Handled)
                 {
-                    break;
+                    return state.Response!;
                 }
-            }
 
-            if (state.Handled)
-            {
-                return state.Response!;
+                throw;
             }
-
-            throw; // preserves the original stack trace
+        }
+        finally
+        {
+            // Closed handlers are owned and tracked by Microsoft DI. Open-generic
+            // handlers are activated manually and are owned by this request.
+            await handlerLease.DisposeAsync().ConfigureAwait(false);
         }
     }
 
     // Resolves the single handler for this request, enforcing the one-handler rule across
     // both DI-registered (closed) handlers and on-demand-closed open-generic handlers.
-    private static IRequestHandler<TRequest, TResponse> ResolveHandler(IServiceProvider serviceProvider)
+    private static HandlerLease ResolveHandler(IServiceProvider serviceProvider)
     {
         var closedHandlers = serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>().ToList();
 
@@ -119,12 +123,39 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
 
         if (closedHandlers.Count == 1)
         {
-            return closedHandlers[0];
+            return new HandlerLease(closedHandlers[0]);
         }
 
         // Exactly one open-generic match: build it via the cached factory, injecting its
         // dependencies from the current (scope-correct) provider. Open-generic request
         // handlers are created per request (transient) regardless of DefaultLifetime.
-        return (IRequestHandler<TRequest, TResponse>)openMatches[0](serviceProvider, arguments: null);
+        var openGenericHandler = openMatches[0](serviceProvider, arguments: null);
+        return new HandlerLease((IRequestHandler<TRequest, TResponse>)openGenericHandler, openGenericHandler);
+    }
+
+    private sealed class HandlerLease
+    {
+        private readonly object? _ownedInstance;
+
+        public HandlerLease(IRequestHandler<TRequest, TResponse> handler, object? ownedInstance = null)
+        {
+            Handler = handler;
+            _ownedInstance = ownedInstance;
+        }
+
+        public IRequestHandler<TRequest, TResponse> Handler { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            switch (_ownedInstance)
+            {
+                case IAsyncDisposable asyncDisposable:
+                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                    break;
+                case IDisposable disposable:
+                    disposable.Dispose();
+                    break;
+            }
+        }
     }
 }

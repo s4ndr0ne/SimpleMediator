@@ -151,7 +151,7 @@ string s = await mediator.Send(new EchoRequest<string>("hi")); // -> "hi"
 
 The handler is closed to the concrete request type on first use (the match and its construction factory are cached), and its constructor dependencies are injected from the current DI scope. The one-handler-per-request rule still applies: if both a closed and an open-generic handler match the same request, `Send` throws.
 
-> **Lifetime:** open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. The resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. If you need a specific lifetime for the handler itself, register a closed handler instead.
+> **Lifetime:** open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. The resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. Because these handlers are activated outside the native DI registration path, SimpleMediator disposes the handler at the end of the request when it implements `IDisposable` or `IAsyncDisposable`. If you need a specific lifetime for the handler itself, register a closed handler instead.
 
 > **Matcher scope:** type-argument inference covers the common shapes — direct parameters (`IRequestHandler<Query<T>, Result<T>>`), nested generics, and single-dimension arrays (`IRequestHandler<ArrayRequest<T>, T[]>`). It is a deliberately simplified unifier; exotic signatures (multi-dimensional arrays, by-ref/pointer types, deeply mixed constructions) may not resolve. When in doubt, register a closed handler — and turn on [startup validation](#startup-validation) to catch a request that ends up with no matching handler early.
 
@@ -227,6 +227,16 @@ public class TracingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 ```
 
 The same shape covers metrics (increment counters), correlation IDs (read/propagate from the request or an ambient context), and structured error logging (log in a `catch` before rethrowing, or use an `IRequestExceptionHandler<,>`).
+
+## Benchmarks
+
+Repeatable microbenchmarks are provided in `benchmarks/SimpleMediator.Benchmarks`. Run them in Release mode with the BenchmarkDotNet harness:
+
+```bash
+dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks -- --filter '*MediatorBenchmarks*'
+```
+
+The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
 SimpleMediator relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`. It targets classic (JIT) hosts such as ASP.NET Core and is **not currently Native-AOT or trimming-safe** — `AddSimpleMediator` is annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`, so trim/AOT builds will surface warnings. Do not enable `PublishTrimmed`/`PublishAot` for apps that use it without your own verification.

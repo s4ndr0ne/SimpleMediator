@@ -287,6 +287,71 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
 
     public record ScopedRequest() : IRequest<Guid>;
 
+    [Fact]
+    public async Task Send_DisposesManuallyActivatedOpenGenericHandler()
+    {
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+
+        using var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        await mediator.Send(new DisposableOpenGenericRequest<int>(42));
+
+        Assert.Contains("open-disposed", probe.Events);
+    }
+
+    [Fact]
+    public async Task Send_DisposesOpenGenericHandlerWhenPipelineResolutionFails()
+    {
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options => options.RegisterAssembly(typeof(UnitTest1).Assembly));
+        services.AddTransient<IPreRequestHandler<DisposableOpenGenericRequest<int>, int>>(
+            _ => throw new InvalidOperationException("Unable to construct pre-handler."));
+
+        using var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => mediator.Send(new DisposableOpenGenericRequest<int>(42)));
+
+        Assert.Equal("Unable to construct pre-handler.", exception.Message);
+        Assert.Contains("open-disposed", probe.Events);
+    }
+
+    [Fact]
+    public void OpenGenericResolutionCache_IsBounded()
+    {
+        var configuration = new MediatorConfiguration(
+            NotificationPublishStrategy.Sequential,
+            new[] { typeof(EchoHandler<>) },
+            resolutionCacheCapacity: 1);
+
+        var first = configuration.ResolveOpenGeneric(typeof(EchoRequest<int>), typeof(int));
+        _ = configuration.ResolveOpenGeneric(typeof(EchoRequest<string>), typeof(string));
+        var firstAgain = configuration.ResolveOpenGeneric(typeof(EchoRequest<int>), typeof(int));
+
+        Assert.NotSame(first, firstAgain);
+    }
+
+    public record DisposableOpenGenericRequest<T>(T Value) : IRequest<T>;
+
+    public sealed class DisposableOpenGenericHandler<T> : IRequestHandler<DisposableOpenGenericRequest<T>, T>, IDisposable
+    {
+        private readonly CallProbe _probe;
+
+        public DisposableOpenGenericHandler(CallProbe probe) => _probe = probe;
+
+        public Task<T> Handle(DisposableOpenGenericRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Value);
+
+        public void Dispose() => _probe.Record("open-disposed");
+    }
+
     public class ScopedDep
     {
         public Guid Id { get; } = Guid.NewGuid();

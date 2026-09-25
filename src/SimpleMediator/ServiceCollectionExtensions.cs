@@ -106,7 +106,7 @@ public static class ServiceCollectionExtensions
         // open-generic request handlers to close on demand). Merge with any previous
         // AddSimpleMediator call so modular registrations (one per module) accumulate their
         // open-generic handlers; the last call wins for NotificationPublishStrategy.
-        MergeConfiguration(services, options.NotificationPublishStrategy, openGenericRequestHandlers);
+        MergeConfiguration(services, options.NotificationPublishStrategy, options.OpenGenericResolutionCacheCapacity, openGenericRequestHandlers);
 
         // Execution order is determined by each behavior's Order property at request time
         // (see RequestHandlerWrapperImpl), so registration order here is irrelevant.
@@ -151,6 +151,8 @@ public static class ServiceCollectionExtensions
             throw new ArgumentException(
                 "NotificationPublishStrategy must be a defined NotificationPublishStrategy value.");
         }
+
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.OpenGenericResolutionCacheCapacity);
     }
 
     /// <summary>
@@ -248,6 +250,7 @@ public static class ServiceCollectionExtensions
     private static void MergeConfiguration(
         IServiceCollection services,
         NotificationPublishStrategy strategy,
+        int openGenericResolutionCacheCapacity,
         List<Type> openGenericRequestHandlers)
     {
         var existingDescriptor = services.FirstOrDefault(d => d.ServiceType == typeof(MediatorConfiguration));
@@ -260,11 +263,11 @@ public static class ServiceCollectionExtensions
                 .ToList();
 
             services.Remove(existingDescriptor);
-            services.AddSingleton(new MediatorConfiguration(strategy, merged));
+            services.AddSingleton(new MediatorConfiguration(strategy, merged, openGenericResolutionCacheCapacity));
         }
         else
         {
-            services.AddSingleton(new MediatorConfiguration(strategy, openGenericRequestHandlers));
+            services.AddSingleton(new MediatorConfiguration(strategy, openGenericRequestHandlers, openGenericResolutionCacheCapacity));
         }
     }
 

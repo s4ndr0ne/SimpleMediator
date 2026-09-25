@@ -27,6 +27,12 @@ public class SimpleMediatorOptions
     /// </summary>
     public bool ValidateOnBuild { get; set; }
 
+    /// <summary>
+    /// Maximum number of open-generic request resolution plans retained per
+    /// mediator configuration. Plans contain factories, never handler instances.
+    /// </summary>
+    public int OpenGenericResolutionCacheCapacity { get; set; } = 1024;
+
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
