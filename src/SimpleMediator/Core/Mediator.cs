@@ -7,8 +7,10 @@ namespace SimpleMediator.Core;
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
-    private static readonly BoundedFactoryCache<(Type Request, Type Response), Func<object>> _requestHandlerFactories = new(1024);
-    private static readonly BoundedFactoryCache<Type, Func<object>> _notificationHandlerFactories = new(1024);
+    // Wrappers are stateless: cache the instances themselves instead of a factory that
+    // creates a new wrapper for every request/notification.
+    private static readonly BoundedFactoryCache<(Type Request, Type Response), object> _requestHandlerWrappers = new(1024);
+    private static readonly BoundedFactoryCache<Type, object> _notificationHandlerWrappers = new(1024);
 
     public Mediator(IServiceProvider serviceProvider)
     {
@@ -29,13 +31,11 @@ public class Mediator : IMediator
 
         // Key by both request and response type so cache entries remain correct even if callers
         // use explicit generic response types.
-        var factory = _requestHandlerFactories.GetOrAdd((requestType, typeof(TResponse)), key =>
+        var handler = (RequestHandlerWrapper<TResponse>)_requestHandlerWrappers.GetOrAdd((requestType, typeof(TResponse)), key =>
         {
             var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response);
-            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile()();
         });
-
-        var handler = (RequestHandlerWrapper<TResponse>)factory();
 
         return await handler.Handle(request, _serviceProvider, cancellationToken).ConfigureAwait(false);
     }
@@ -46,13 +46,11 @@ public class Mediator : IMediator
 
         var notificationType = notification.GetType();
 
-        var factory = _notificationHandlerFactories.GetOrAdd(notificationType, t =>
+        var handler = (NotificationHandlerWrapper)_notificationHandlerWrappers.GetOrAdd(notificationType, t =>
         {
             var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
-            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile();
+            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile()();
         });
-
-        var handler = (NotificationHandlerWrapper)factory();
 
         await handler.Handle(notification, _serviceProvider, cancellationToken).ConfigureAwait(false);
     }
