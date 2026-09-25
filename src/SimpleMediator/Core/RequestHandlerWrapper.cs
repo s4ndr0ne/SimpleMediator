@@ -100,13 +100,25 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
     // both DI-registered (closed) handlers and on-demand-closed open-generic handlers.
     private static HandlerLease ResolveHandler(IServiceProvider serviceProvider)
     {
-        var closedHandlers = serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>().ToList();
+        // Avoid materializing the DI result with ToList(). Requests normally have one
+        // closed handler, so keeping only the first instance and a count saves a temporary
+        // List allocation while preserving the multiple-handler validation.
+        IRequestHandler<TRequest, TResponse>? closedHandler = null;
+        var closedHandlerCount = 0;
+        foreach (var candidate in serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>())
+        {
+            closedHandlerCount++;
+            if (closedHandlerCount == 1)
+            {
+                closedHandler = candidate;
+            }
+        }
 
         var configuration = serviceProvider.GetService<MediatorConfiguration>();
         var openMatches = configuration?.ResolveOpenGeneric(typeof(TRequest), typeof(TResponse)).Factories
                           ?? Array.Empty<ObjectFactory>();
 
-        var total = closedHandlers.Count + openMatches.Count;
+        var total = closedHandlerCount + openMatches.Count;
 
         if (total == 0)
         {
@@ -121,9 +133,9 @@ internal class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWr
                 "A request can only have one handler.");
         }
 
-        if (closedHandlers.Count == 1)
+        if (closedHandlerCount == 1)
         {
-            return new HandlerLease(closedHandlers[0]);
+            return new HandlerLease(closedHandler!);
         }
 
         // Exactly one open-generic match: build it via the cached factory, injecting its
