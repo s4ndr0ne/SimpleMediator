@@ -68,6 +68,11 @@ public class PingRequestHandler : IRequestHandler<PingRequest, string>
 var response = await mediator.Send(new PingRequest("Hello"));
 ```
 
+> **AOT/trimming:** the public `IMediator`/`Mediator` dispatch methods are annotated because
+> wrapper creation uses reflection and runtime code generation. SimpleMediator currently targets
+> JIT hosts; Native AOT and trimming are not supported without an application-specific verification
+> strategy.
+
 > **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
 
 ### Notifications
@@ -154,7 +159,7 @@ string s = await mediator.Send(new EchoRequest<string>("hi")); // -> "hi"
 
 The handler is closed to the concrete request type on first use (the match and its construction factory are cached), and its constructor dependencies are injected from the current DI scope. The one-handler-per-request rule still applies: if both a closed and an open-generic handler match the same request, `Send` throws.
 
-> **Lifetime:** open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. The resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. Because these handlers are activated outside the native DI registration path, SimpleMediator disposes the handler at the end of the request when it implements `IDisposable` or `IAsyncDisposable`. If you need a specific lifetime for the handler itself, register a closed handler instead.
+> **Lifetime:** open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. This is an intentional limitation of the custom generic matcher; `DefaultLifetime` applies to closed handlers, notification/pre/post/exception handlers, and behaviors registered through native DI. The resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. Because these handlers are activated outside the native DI registration path, SimpleMediator disposes the handler at the end of the request when it implements `IDisposable` or `IAsyncDisposable`. If you need a specific lifetime for the handler itself, register a closed handler instead.
 
 > **Matcher scope:** type-argument inference covers the common shapes — direct parameters (`IRequestHandler<Query<T>, Result<T>>`), nested generics, and single-dimension arrays (`IRequestHandler<ArrayRequest<T>, T[]>`). It is a deliberately simplified unifier; exotic signatures (multi-dimensional arrays, by-ref/pointer types, deeply mixed constructions) may not resolve. When in doubt, register a closed handler. Startup validation checks ambiguities for closed request types represented in the service registrations; it cannot predict every request type an application may send.
 

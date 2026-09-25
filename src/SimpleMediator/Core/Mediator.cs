@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
 
@@ -30,6 +31,8 @@ public class Mediator : IMediator
     }
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -37,6 +40,8 @@ public class Mediator : IMediator
     }
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -55,6 +60,8 @@ public class Mediator : IMediator
     }
 
     /// <inheritdoc />
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);

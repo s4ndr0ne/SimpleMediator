@@ -4,7 +4,7 @@
     <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>default</LangVersion>
     <Deterministic>true</Deterministic>
 
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
@@ -24,6 +24,8 @@
     <VersionSuffix Condition="'$(VersionSuffix)' == ''">local</VersionSuffix>
     <Authors>s4ndr0ne</Authors>
     <Description>A simple mediator implementation for .NET</Description>
+    <Copyright>Copyright © s4ndr0ne</Copyright>
+    <PackageReleaseNotes>See CHANGELOG.md for release history.</PackageReleaseNotes>
     <RepositoryUrl>https://github.com/s4ndr0ne/SimpleMediator</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

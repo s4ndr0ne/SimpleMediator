@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace SimpleMediator.Interfaces;
 
 /// <summary>
@@ -12,6 +14,8 @@ public interface IMediator
     /// <param name="request">The request to process.</param>
     /// <param name="cancellationToken">An optional cancellation token.</param>
     /// <returns>A task representing the asynchronous operation that yields the response.</returns>
+    [RequiresUnreferencedCode("SimpleMediator creates request wrappers and resolves handlers through reflection.")]
+    [RequiresDynamicCode("SimpleMediator compiles request wrappers at runtime.")]
     Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -20,6 +24,8 @@ public interface IMediator
     /// <param name="request">The request to process.</param>
     /// <param name="cancellationToken">An optional cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    [RequiresUnreferencedCode("SimpleMediator creates request wrappers and resolves handlers through reflection.")]
+    [RequiresDynamicCode("SimpleMediator compiles request wrappers at runtime.")]
     Task Send(IRequest request, CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -29,5 +35,7 @@ public interface IMediator
     /// <param name="notification">The notification to publish.</param>
     /// <param name="cancellationToken">An optional cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
+    [RequiresUnreferencedCode("SimpleMediator creates notification wrappers through reflection.")]
+    [RequiresDynamicCode("SimpleMediator compiles notification wrappers at runtime.")]
     Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification;
 }
