@@ -37,10 +37,10 @@ public interface IRequestExceptionHandler<in TRequest, TResponse>
     where TRequest : IRequest<TResponse>
 {
     /// <summary>
-    /// Execution order: lower runs first. Defaults to <c>0</c>, so handlers that don't
-    /// override it run in registration order. Set an explicit value to make ordering
-    /// deterministic — assembly-scan discovery order is not guaranteed, so handlers that
-    /// share the same <see cref="Order"/> run in an unspecified order relative to each other.
+    /// Execution order: lower runs first. Defaults to <c>0</c>. Handlers with equal values
+    /// keep their DI resolution order. The value is read from the current instances whenever
+    /// an exception is handled. Assembly-scan discovery order is not guaranteed, so set
+    /// distinct values when the relative order of scanned handlers must be fixed.
     /// </summary>
     int Order => 0;
 

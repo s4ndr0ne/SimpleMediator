@@ -6,8 +6,10 @@ namespace SimpleMediator;
 
 public class SimpleMediatorOptions
 {
-    internal HashSet<Assembly> Assemblies { get; } = new();
-    internal HashSet<Type> Behaviors { get; } = new();
+    // Keep the registration order stable so assembly scanning and behavior ordering stay
+    // deterministic across AddSimpleMediator calls and different runtime implementations.
+    internal List<Assembly> Assemblies { get; } = new();
+    internal List<Type> Behaviors { get; } = new();
     public ServiceLifetime DefaultLifetime { get; set; } = ServiceLifetime.Scoped;
 
     /// <summary>
@@ -21,9 +23,10 @@ public class SimpleMediatorOptions
 
     /// <summary>
     /// When true, <c>AddSimpleMediator</c> runs <c>ValidateSimpleMediator</c> immediately so
-    /// configuration errors (duplicate request handlers, a request matched by both a closed
-    /// and an open-generic handler) fail fast at startup instead of on the first request.
-    /// Defaults to false.
+    /// configuration errors for known closed request registrations (duplicate request
+    /// handlers, or a closed handler also matched by an open-generic handler) fail fast at
+    /// registration time instead of on the first request. It cannot validate request types
+    /// that have no closed handler registration. Defaults to false.
     /// </summary>
     public bool ValidateOnBuild { get; set; }
 
@@ -37,21 +40,24 @@ public class SimpleMediatorOptions
     {
         ArgumentNullException.ThrowIfNull(assembly);
 
-        Assemblies.Add(assembly);
+        if (!Assemblies.Contains(assembly))
+        {
+            Assemblies.Add(assembly);
+        }
+
         return this;
     }
 
     /// <summary>
     /// Registers a pipeline behavior. Execution order is controlled by the behavior's
     /// <see cref="IPipelineBehavior{TRequest, TResponse}"/> <c>Order</c> property
-    /// (lower runs first / outermost).
+    /// (lower runs first / outermost); equal values preserve DI resolution order.
     /// </summary>
     public SimpleMediatorOptions AddBehavior(Type behaviorType)
     {
         ArgumentNullException.ThrowIfNull(behaviorType);
 
-        var implementsPipelineBehavior = behaviorType.GetInterfaces()
-            .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+        var implementsPipelineBehavior = OpenGenericRegistrationRules.ImplementsPipelineBehavior(behaviorType);
 
         if (!implementsPipelineBehavior)
         {
@@ -62,7 +68,11 @@ public class SimpleMediatorOptions
                 nameof(behaviorType));
         }
 
-        Behaviors.Add(behaviorType);
+        if (!Behaviors.Contains(behaviorType))
+        {
+            Behaviors.Add(behaviorType);
+        }
+
         return this;
     }
 }

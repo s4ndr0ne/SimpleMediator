@@ -37,8 +37,9 @@ var services = new ServiceCollection();
 
 services.AddSimpleMediator(options =>
 {
-    // Scan assemblies for Handlers, Pre/Post Handlers, and Behaviors
+    // Scan for request, notification, pre/post, and exception handlers.
     options.RegisterAssembly(typeof(Program).Assembly);
+    // Register pipeline behaviors explicitly with AddBehavior.
     
     // Optionally change the default lifetime (default is Scoped)
     options.DefaultLifetime = ServiceLifetime.Scoped;
@@ -67,6 +68,8 @@ public class PingRequestHandler : IRequestHandler<PingRequest, string>
 var response = await mediator.Send(new PingRequest("Hello"));
 ```
 
+> **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
+
 ### Notifications
 Notifications are broadcast messages sent to every registered handler.
 
@@ -83,7 +86,7 @@ await mediator.Publish(new UserCreated("user@example.com"));
 ```
 
 #### Dispatch strategy
-By default handlers run **sequentially** (`NotificationPublishStrategy.Sequential`). This is the safe choice: all handlers share the same DI scope, so a scoped, non-thread-safe service (e.g. `DbContext`) is never touched concurrently. If a handler throws, the remaining handlers are not invoked.
+By default handlers run **sequentially** (`NotificationPublishStrategy.Sequential`). This is the safe choice: all handlers share the same DI scope, so a scoped, non-thread-safe service (e.g. `DbContext`) is never touched concurrently. If a handler throws, the remaining handlers are not invoked. Every notification handler must return a non-null `Task`; returning `null` fails with `InvalidOperationException` in sequential mode and is included in the `AggregateException` in parallel mode.
 
 Opt into parallel dispatch only when handlers are independent:
 
@@ -116,7 +119,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 }
 ```
 
-Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost), not by registration order. You can register an open generic type or a closed type bound to a specific request/response pair:
+Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost). Equal values preserve DI resolution order. `Order` is read from the current behavior instances on each request, so it may depend on scoped state. Assembly scanning does not register behaviors; add each one explicitly. You can register an open generic type or a closed type bound to a specific request/response pair:
 
 ```csharp
 services.AddSimpleMediator(options =>
@@ -153,7 +156,7 @@ The handler is closed to the concrete request type on first use (the match and i
 
 > **Lifetime:** open-generic request handlers are **created per request** (effectively transient), regardless of `DefaultLifetime`. The resolution *plan* is cached, never the instance, so injected scoped dependencies remain correct. Because these handlers are activated outside the native DI registration path, SimpleMediator disposes the handler at the end of the request when it implements `IDisposable` or `IAsyncDisposable`. If you need a specific lifetime for the handler itself, register a closed handler instead.
 
-> **Matcher scope:** type-argument inference covers the common shapes — direct parameters (`IRequestHandler<Query<T>, Result<T>>`), nested generics, and single-dimension arrays (`IRequestHandler<ArrayRequest<T>, T[]>`). It is a deliberately simplified unifier; exotic signatures (multi-dimensional arrays, by-ref/pointer types, deeply mixed constructions) may not resolve. When in doubt, register a closed handler — and turn on [startup validation](#startup-validation) to catch a request that ends up with no matching handler early.
+> **Matcher scope:** type-argument inference covers the common shapes — direct parameters (`IRequestHandler<Query<T>, Result<T>>`), nested generics, and single-dimension arrays (`IRequestHandler<ArrayRequest<T>, T[]>`). It is a deliberately simplified unifier; exotic signatures (multi-dimensional arrays, by-ref/pointer types, deeply mixed constructions) may not resolve. When in doubt, register a closed handler. Startup validation checks ambiguities for closed request types represented in the service registrations; it cannot predict every request type an application may send.
 
 ### Exception Handlers
 Recover from (or observe) exceptions thrown anywhere in a request's pipeline — the handler, its pre/post handlers, or any behavior.
@@ -170,14 +173,14 @@ public class ValidationExceptionHandler : IRequestExceptionHandler<CreateUser, U
 }
 ```
 
-Handlers run in **ascending `Order`** (the `IRequestExceptionHandler<,>.Order` property, default `0`); the first to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning.
+Handlers run in **ascending `Order`** (the `IRequestExceptionHandler<,>.Order` property, default `0`); equal values preserve DI resolution order. The value is read from the current handler instances when an exception occurs, so it may depend on scoped state. The first handler to call `SetHandled` supplies the response returned to the caller and short-circuits the rest. If none handles the exception, it is rethrown with its original stack trace. A **catch-all** handler is just an open generic — `class LogExceptions<TRequest, TResponse> : IRequestExceptionHandler<TRequest, TResponse>` — and is picked up automatically by assembly scanning. Since assembly discovery order is not guaranteed, assign distinct values when scanned handlers need a fixed relative order.
 
 If an exception handler itself throws, the mediator throws an `AggregateException` containing both the original request exception and the exception-handler failure.
 
 > **Cancellation is never swallowed:** an `OperationCanceledException` is treated as control flow, not as an error — it is *never* offered to `IRequestExceptionHandler<,>` and propagates straight to the caller, regardless of whether the cancellation originated from the request's own `CancellationToken` or from a linked/alien token a behavior or handler observed. Likewise, when notification handlers run in `Parallel` and every faulted handler throws `OperationCanceledException` while the supplied token is cancelled, `Publish` surfaces the `OperationCanceledException` itself rather than an `AggregateException` wrapping it.
 
 ## Startup Validation
-Configuration mistakes (two handlers for one request, or a request matched by both a closed and an open-generic handler) otherwise surface only on the first call that hits them. Opt into fail-fast validation so a misconfigured app dies at startup instead of in production:
+Configuration mistakes involving a closed request registration (duplicate handlers, or a closed handler also matched by an open-generic handler) otherwise surface only on the first call that hits them. Opt into fail-fast validation so these known conflicts are caught during registration:
 
 ```csharp
 services.AddSimpleMediator(options =>
@@ -190,9 +193,9 @@ services.AddSimpleMediator(options =>
 services.ValidateSimpleMediator();
 ```
 
-Validation flags more than one registration for the same closed `IRequestHandler<,>` (whether by type, factory, or instance) and any request matched by both a closed and an open-generic handler.
+Validation flags multiple registrations for the same closed `IRequestHandler<,>` (whether by type, factory, or instance), plus conflicts between a known closed request handler and either a scanned SimpleMediator open-generic handler or a native DI open-generic `IRequestHandler<,>` registration. It cannot validate request types absent from the closed registrations.
 
-> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and open-generic handlers are merged across calls. `NotificationPublishStrategy` is last-call-wins. Each call's `ValidateOnBuild` setting validates the cumulative registrations at that point; it is not a persistent global setting.
+> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` are last-call-wins; a later call using defaults resets earlier custom values. Each call's `ValidateOnBuild` setting validates the registrations accumulated at that point; it is not a persistent global setting.
 
 ## Observability
 SimpleMediator keeps the core limited to the DI abstractions dependency; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:

@@ -25,8 +25,6 @@ internal sealed class MediatorConfiguration
     private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _resolutionCache;
     internal readonly BoundedFactoryCache<(Type Request, Type Response), object> RequestHandlerWrappers;
     internal readonly BoundedFactoryCache<Type, object> NotificationHandlerWrappers;
-    private readonly BoundedFactoryCache<(Type Request, Type Response), int[]> _behaviorOrderCache;
-    private readonly BoundedFactoryCache<(Type Request, Type Response), int[]> _exceptionHandlerOrderCache;
 
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
@@ -37,10 +35,8 @@ internal sealed class MediatorConfiguration
         NotificationPublishStrategy = notificationPublishStrategy;
         OpenGenericRequestHandlers = openGenericRequestHandlers ?? NoTypes;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
-        RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(resolutionCacheCapacity);
-        NotificationHandlerWrappers = new BoundedFactoryCache<Type, object>(resolutionCacheCapacity);
-        _behaviorOrderCache = new BoundedFactoryCache<(Type Request, Type Response), int[]>(resolutionCacheCapacity);
-        _exceptionHandlerOrderCache = new BoundedFactoryCache<(Type Request, Type Response), int[]>(resolutionCacheCapacity);
+        RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
+        NotificationHandlerWrappers = new BoundedFactoryCache<Type, object>(1024);
     }
 
     /// <summary>
@@ -49,21 +45,6 @@ internal sealed class MediatorConfiguration
     /// </summary>
     public OpenGenericResolution ResolveOpenGeneric(Type requestType, Type responseType)
         => _resolutionCache.GetOrAdd((requestType, responseType), key => BuildResolution(key.Request, key.Response));
-
-    internal int[] GetBehaviorOrder<T>(Type requestType, Type responseType, IReadOnlyList<T> behaviors, Func<T, int> order)
-        => _behaviorOrderCache.GetOrAdd((requestType, responseType), _ => BuildOrder(behaviors, order, descending: true));
-
-    internal int[] GetExceptionHandlerOrder<T>(Type requestType, Type responseType, IReadOnlyList<T> handlers, Func<T, int> order)
-        => _exceptionHandlerOrderCache.GetOrAdd((requestType, responseType), _ => BuildOrder(handlers, order, descending: false));
-
-    private static int[] BuildOrder<T>(IReadOnlyList<T> values, Func<T, int> order, bool descending)
-    {
-        var indexes = Enumerable.Range(0, values.Count).ToArray();
-        Array.Sort(indexes, (left, right) => descending
-            ? order(values[right]).CompareTo(order(values[left]))
-            : order(values[left]).CompareTo(order(values[right])));
-        return indexes;
-    }
 
     private OpenGenericResolution BuildResolution(Type requestType, Type responseType)
     {

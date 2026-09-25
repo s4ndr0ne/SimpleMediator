@@ -35,7 +35,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
     {
         foreach (var handler in handlers)
         {
-            await handler.Handle(notification, cancellationToken).ConfigureAwait(false);
+            await InvokeSafely(handler, notification, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -123,7 +123,9 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
     {
         try
         {
-            return handler.Handle(notification, cancellationToken) ?? Task.CompletedTask;
+            return handler.Handle(notification, cancellationToken)
+                   ?? throw new InvalidOperationException(
+                       $"Notification handler '{handler.GetType().FullName}' returned a null Task.");
         }
         catch (Exception ex)
         {
