@@ -103,17 +103,14 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
     {
         if (aggregate.InnerExceptions.Count == 0) return false;
 
-        // The supplied token must be cancelled AND every inner exception must be
-        // an OperationCanceledException. If any handler threw a *real* exception,
-        // we keep the AggregateException path so the caller observes every failure.
-        if (!cancellationToken.IsCancellationRequested) return false;
-
+        // If every faulted handler threw an OperationCanceledException,
+        // treat it as a cancellation so callers observe OperationCanceledException.
         foreach (var inner in aggregate.InnerExceptions)
         {
             if (inner is not OperationCanceledException) return false;
         }
 
-        return true;
+        return cancellationToken.IsCancellationRequested;
     }
 
     private static Task InvokeSafely(

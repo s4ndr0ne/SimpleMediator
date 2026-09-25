@@ -6,6 +6,9 @@ using SimpleMediator.Interfaces;
 
 namespace SimpleMediator;
 
+/// <summary>
+/// Extension methods for configuring SimpleMediator in an <see cref="IServiceCollection"/>.
+/// </summary>
 public static class ServiceCollectionExtensions
 {
     internal const string ReflectionMessage =
@@ -13,6 +16,12 @@ public static class ServiceCollectionExtensions
     internal const string DynamicCodeMessage =
         "SimpleMediator compiles expression trees and constructs generic handler types at runtime, which is not supported by Native AOT.";
 
+    /// <summary>
+    /// Registers SimpleMediator services and handlers in the specified <see cref="IServiceCollection"/>.
+    /// </summary>
+    /// <param name="services">The service collection to configure.</param>
+    /// <param name="configure">An action to configure <see cref="SimpleMediatorOptions"/>.</param>
+    /// <returns>The service collection for chaining.</returns>
     [RequiresUnreferencedCode(ReflectionMessage)]
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection AddSimpleMediator(this IServiceCollection services, Action<SimpleMediatorOptions> configure)
@@ -50,11 +59,7 @@ public static class ServiceCollectionExtensions
         services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
 
         var openGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        MergeConfiguration(
-            services,
-            options.NotificationPublishStrategy,
-            options.OpenGenericResolutionCacheCapacity,
-            openGenericRequestHandlers);
+        MergeConfiguration(services, options, openGenericRequestHandlers);
 
         RegisterBehaviors(services, options);
 
@@ -120,27 +125,34 @@ public static class ServiceCollectionExtensions
 
     private static void MergeConfiguration(
         IServiceCollection services,
-        NotificationPublishStrategy strategy,
-        int openGenericResolutionCacheCapacity,
+        SimpleMediatorOptions options,
         List<Type> openGenericRequestHandlers)
     {
         var existingDescriptor = services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(MediatorConfiguration));
 
         if (existingDescriptor?.ImplementationInstance is MediatorConfiguration existing)
         {
+            var strategy = options.HasCustomPublishStrategy
+                ? options.NotificationPublishStrategy
+                : existing.NotificationPublishStrategy;
+
+            var capacity = options.HasCustomCacheCapacity
+                ? options.OpenGenericResolutionCacheCapacity
+                : existing.ResolutionCacheCapacity;
+
             var mergedHandlers = existing.OpenGenericRequestHandlers
                 .Concat(openGenericRequestHandlers)
                 .Distinct()
                 .ToList();
 
             services.Remove(existingDescriptor);
-            services.AddSingleton(new MediatorConfiguration(strategy, mergedHandlers, openGenericResolutionCacheCapacity));
+            services.AddSingleton(new MediatorConfiguration(strategy, mergedHandlers, capacity));
             return;
         }
 
         services.AddSingleton(new MediatorConfiguration(
-            strategy,
+            options.NotificationPublishStrategy,
             openGenericRequestHandlers,
-            openGenericResolutionCacheCapacity));
+            options.OpenGenericResolutionCacheCapacity));
     }
 }

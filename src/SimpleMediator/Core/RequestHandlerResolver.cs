@@ -53,7 +53,7 @@ internal static class RequestHandlerResolver
         return new HandlerLease<TRequest, TResponse>((IRequestHandler<TRequest, TResponse>)openGenericHandler, openGenericHandler);
     }
 
-    internal sealed class HandlerLease<TRequest, TResponse>
+    internal readonly struct HandlerLease<TRequest, TResponse>
         where TRequest : IRequest<TResponse>
     {
         private readonly object? _ownedInstance;
@@ -66,16 +66,17 @@ internal static class RequestHandlerResolver
 
         public IRequestHandler<TRequest, TResponse> Handler { get; }
 
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
             switch (_ownedInstance)
             {
                 case IAsyncDisposable asyncDisposable:
-                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                    break;
+                    return asyncDisposable.DisposeAsync();
                 case IDisposable disposable:
                     disposable.Dispose();
-                    break;
+                    return ValueTask.CompletedTask;
+                default:
+                    return ValueTask.CompletedTask;
             }
         }
     }

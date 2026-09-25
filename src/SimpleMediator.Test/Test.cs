@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator;
 using SimpleMediator.Core;
@@ -425,6 +425,27 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     }
 
     [Fact]
+    public async Task Behaviors_WithEqualOrder_PreserveRegistrationOrder()
+    {
+        var probe = new CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.AddBehavior(typeof(EqualFirstBehavior<,>));
+            options.AddBehavior(typeof(EqualSecondBehavior<,>));
+        });
+        services.AddTransient<IRequestHandler<OrderedRequest, string>, OrderedRequestHandler>();
+
+        using var provider = services.BuildServiceProvider();
+        await provider.GetRequiredService<IMediator>().Send<string>(new OrderedRequest());
+
+        Assert.Equal(
+            new[] { "equal-first:before", "equal-second:before", "handler", "equal-second:after", "equal-first:after" },
+            probe.Events.ToArray());
+    }
+
+    [Fact]
     public void AddBehavior_Throws_WhenTypeDoesNotImplementPipelineBehavior()
     {
         var services = new ServiceCollection();
@@ -477,6 +498,36 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             _probe.Record("second:before");
             var response = await next(cancellationToken);
             _probe.Record("second:after");
+            return response;
+        }
+    }
+
+    public class EqualFirstBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        private readonly CallProbe _probe;
+        public EqualFirstBehavior(CallProbe probe) => _probe = probe;
+        public int Order => 0;
+        public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+        {
+            _probe.Record("equal-first:before");
+            var response = await next(cancellationToken);
+            _probe.Record("equal-first:after");
+            return response;
+        }
+    }
+
+    public class EqualSecondBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        private readonly CallProbe _probe;
+        public EqualSecondBehavior(CallProbe probe) => _probe = probe;
+        public int Order => 0;
+        public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+        {
+            _probe.Record("equal-second:before");
+            var response = await next(cancellationToken);
+            _probe.Record("equal-second:after");
             return response;
         }
     }
@@ -1225,6 +1276,25 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             mediator.Publish(new ParallelCancellationNotification(), cts.Token));
     }
 
+    [Fact]
+    public async Task Publish_Parallel_DoesNotTreatUncancelledOperationCanceledExceptionAsCancellation()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+        using var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        var exception = await Assert.ThrowsAsync<AggregateException>(() =>
+            mediator.Publish(new ParallelUncancelledNotification()));
+
+        Assert.Single(exception.InnerExceptions);
+        Assert.IsType<OperationCanceledException>(exception.InnerExceptions[0]);
+    }
+
     public record ParallelCancellationNotification() : INotification;
 
     public class ParallelCancelHandler1 : INotificationHandler<ParallelCancellationNotification>
@@ -1237,6 +1307,14 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     {
         public Task Handle(ParallelCancellationNotification notification, CancellationToken cancellationToken)
             => Task.FromException(new OperationCanceledException(cancellationToken));
+    }
+
+    public record ParallelUncancelledNotification() : INotification;
+
+    public class ParallelUncancelledHandler : INotificationHandler<ParallelUncancelledNotification>
+    {
+        public Task Handle(ParallelUncancelledNotification notification, CancellationToken cancellationToken)
+            => Task.FromException(new OperationCanceledException());
     }
 
     // ---- Cancellation from an alien token is not swallowed by IRequestExceptionHandler ----
@@ -1467,4 +1545,82 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
             => throw new InvalidOperationException("exception handler failed");
     }
 
+    [Fact]
+    public void AddSimpleMediator_PreservesConfiguredStrategyAndCapacity_WhenMerged()
+    {
+        var services = new ServiceCollection();
+
+        // First module configures custom Parallel strategy and custom capacity
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.OpenGenericResolutionCacheCapacity = 4096;
+        });
+
+        // Second module adds an assembly without touching strategy or capacity
+        services.AddSimpleMediator(options =>
+        {
+            options.RegisterAssembly(typeof(UnitTest1).Assembly);
+        });
+
+        var provider = services.BuildServiceProvider();
+        var config = provider.GetRequiredService<MediatorConfiguration>();
+
+        Assert.Equal(NotificationPublishStrategy.Parallel, config.NotificationPublishStrategy);
+        Assert.Equal(4096, config.ResolutionCacheCapacity);
+    }
+
+    [Fact]
+    public void AddSimpleMediator_AllowsExplicitOverrideOfStrategyAndCapacity_WhenMerged()
+    {
+        var services = new ServiceCollection();
+
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+            options.OpenGenericResolutionCacheCapacity = 2048;
+        });
+
+        // Second registration explicitly sets Sequential and 512
+        services.AddSimpleMediator(options =>
+        {
+            options.NotificationPublishStrategy = NotificationPublishStrategy.Sequential;
+            options.OpenGenericResolutionCacheCapacity = 512;
+        });
+
+        var provider = services.BuildServiceProvider();
+        var config = provider.GetRequiredService<MediatorConfiguration>();
+
+        Assert.Equal(NotificationPublishStrategy.Sequential, config.NotificationPublishStrategy);
+        Assert.Equal(512, config.ResolutionCacheCapacity);
+    }
+
+    [Fact]
+    public async Task BoundedFactoryCache_HandlesConcurrentAccessAndEviction()
+    {
+        var cache = new BoundedFactoryCache<int, string>(10);
+        var tasks = Enumerable.Range(0, 50).Select(i => Task.Run(() =>
+        {
+            for (var j = 0; j < 100; j++)
+            {
+                var key = (i * 10 + j) % 30;
+                var value = cache.GetOrAdd(key, k => $"val_{k}");
+                Assert.Equal($"val_{key}", value);
+            }
+        }));
+
+        await Task.WhenAll(tasks);
+    }
+
+    [Fact]
+    public void Unit_IsReadonlyStruct()
+    {
+        Assert.True(typeof(Unit).IsValueType);
+        // Struct should equal itself
+        var u1 = Unit.Value;
+        var u2 = new Unit();
+        Assert.Equal(u1, u2);
+        Assert.True(u1 == u2);
+        Assert.False(u1 != u2);
+    }
 }

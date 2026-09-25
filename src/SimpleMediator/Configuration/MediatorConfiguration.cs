@@ -12,6 +12,7 @@ internal sealed class MediatorConfiguration
     private static readonly Type[] NoTypes = Array.Empty<Type>();
 
     public NotificationPublishStrategy NotificationPublishStrategy { get; }
+    public int ResolutionCacheCapacity { get; }
 
     /// <summary>
     /// Open-generic request-handler implementation types discovered by assembly scanning
@@ -33,6 +34,7 @@ internal sealed class MediatorConfiguration
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
+        ResolutionCacheCapacity = resolutionCacheCapacity;
         OpenGenericRequestHandlers = openGenericRequestHandlers ?? NoTypes;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
         RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(1024);

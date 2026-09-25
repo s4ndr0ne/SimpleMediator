@@ -44,5 +44,13 @@ public interface IRequestExceptionHandler<in TRequest, TResponse>
     /// </summary>
     int Order => 0;
 
+    /// <summary>
+    /// Handles the exception thrown during request processing.
+    /// </summary>
+    /// <param name="request">The incoming request that faulted.</param>
+    /// <param name="exception">The exception that was thrown.</param>
+    /// <param name="state">The state object used to supply a replacement response and mark the exception handled.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A task representing the asynchronous operation.</returns>
     Task Handle(TRequest request, Exception exception, RequestExceptionHandlerState<TResponse> state, CancellationToken cancellationToken);
 }

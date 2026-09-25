@@ -4,13 +4,28 @@ using SimpleMediator.Interfaces;
 
 namespace SimpleMediator;
 
+/// <summary>
+/// Configuration options for SimpleMediator registrations and runtime behavior.
+/// </summary>
 public class SimpleMediatorOptions
 {
     // Keep the registration order stable so assembly scanning and behavior ordering stay
     // deterministic across AddSimpleMediator calls and different runtime implementations.
     internal List<Assembly> Assemblies { get; } = new();
     internal List<Type> Behaviors { get; } = new();
-    public ServiceLifetime DefaultLifetime { get; set; } = ServiceLifetime.Scoped;
+    private ServiceLifetime? _defaultLifetime;
+    private NotificationPublishStrategy? _notificationPublishStrategy;
+    private int? _openGenericResolutionCacheCapacity;
+
+    /// <summary>
+    /// The default service lifetime used when registering discovered handlers and behaviors in DI.
+    /// Defaults to <see cref="ServiceLifetime.Scoped"/>.
+    /// </summary>
+    public ServiceLifetime DefaultLifetime
+    {
+        get => _defaultLifetime ?? ServiceLifetime.Scoped;
+        set => _defaultLifetime = value;
+    }
 
     /// <summary>
     /// How notifications are dispatched to their handlers. Defaults to
@@ -19,7 +34,11 @@ public class SimpleMediatorOptions
     /// <see cref="NotificationPublishStrategy.Parallel"/> only when handlers are
     /// independent and do not share non-thread-safe scoped state.
     /// </summary>
-    public NotificationPublishStrategy NotificationPublishStrategy { get; set; } = NotificationPublishStrategy.Sequential;
+    public NotificationPublishStrategy NotificationPublishStrategy
+    {
+        get => _notificationPublishStrategy ?? NotificationPublishStrategy.Sequential;
+        set => _notificationPublishStrategy = value;
+    }
 
     /// <summary>
     /// When true, <c>AddSimpleMediator</c> runs <c>ValidateSimpleMediator</c> immediately so
@@ -34,8 +53,22 @@ public class SimpleMediatorOptions
     /// Maximum number of open-generic request resolution plans retained per
     /// mediator configuration. Plans contain factories, never handler instances.
     /// </summary>
-    public int OpenGenericResolutionCacheCapacity { get; set; } = 1024;
+    public int OpenGenericResolutionCacheCapacity
+    {
+        get => _openGenericResolutionCacheCapacity ?? 1024;
+        set => _openGenericResolutionCacheCapacity = value;
+    }
 
+    internal bool HasCustomPublishStrategy => _notificationPublishStrategy.HasValue;
+    internal bool HasCustomCacheCapacity => _openGenericResolutionCacheCapacity.HasValue;
+
+    /// <summary>
+    /// Registers an assembly to scan for request handlers, notification handlers, pre/post processors,
+    /// and request exception handlers. Pipeline behaviors must be registered explicitly with
+    /// <see cref="AddBehavior(Type)"/>.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <returns>This options instance for chaining.</returns>
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);

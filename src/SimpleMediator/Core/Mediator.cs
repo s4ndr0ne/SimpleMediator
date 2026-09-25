@@ -4,6 +4,9 @@ using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Core;
 
+/// <summary>
+/// Default implementation of <see cref="IMediator"/> using Microsoft DI.
+/// </summary>
 public class Mediator : IMediator
 {
     private readonly IServiceProvider _serviceProvider;
@@ -12,6 +15,10 @@ public class Mediator : IMediator
     private readonly BoundedFactoryCache<(Type Request, Type Response), object> _requestHandlerWrappers;
     private readonly BoundedFactoryCache<Type, object> _notificationHandlerWrappers;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Mediator"/> class.
+    /// </summary>
+    /// <param name="serviceProvider">The service provider used to resolve handlers and configuration.</param>
     public Mediator(IServiceProvider serviceProvider)
     {
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
@@ -22,12 +29,14 @@ public class Mediator : IMediator
             ?? new BoundedFactoryCache<Type, object>(1024);
     }
 
+    /// <inheritdoc />
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         await Send<Unit>(request, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -45,6 +54,7 @@ public class Mediator : IMediator
         return await handler.Handle(request, _serviceProvider, cancellationToken).ConfigureAwait(false);
     }
 
+    /// <inheritdoc />
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);

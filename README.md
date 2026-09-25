@@ -195,7 +195,7 @@ services.ValidateSimpleMediator();
 
 Validation flags multiple registrations for the same closed `IRequestHandler<,>` (whether by type, factory, or instance), plus conflicts between a known closed request handler and either a scanned SimpleMediator open-generic handler or a native DI open-generic `IRequestHandler<,>` registration. It cannot validate request types absent from the closed registrations.
 
-> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` are last-call-wins; a later call using defaults resets earlier custom values. Each call's `ValidateOnBuild` setting validates the registrations accumulated at that point; it is not a persistent global setting.
+> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. Explicitly configured `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` override previous values; a later call that leaves them at their defaults preserves the existing module configuration. Each call's `ValidateOnBuild` setting validates the registrations accumulated at that point; it is not a persistent global setting.
 
 ## Observability
 SimpleMediator keeps the core limited to the DI abstractions dependency; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:
