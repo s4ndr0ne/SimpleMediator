@@ -48,16 +48,37 @@ var services = new ServiceCollection();
 services.AddSimpleMediator();
 services.AddTransient<IRequestHandler<SmokeRequest, string>, SmokeHandler>();
 
-using var provider = services.BuildServiceProvider();
-var mediator = provider.GetRequiredService<IMediator>();
-var response = await mediator.Send(new SmokeRequest("package"));
+using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
 
-if (!string.Equals(response, "handled:package", StringComparison.Ordinal))
+// The mediator must be resolved from a scope: resolving it from the root throws MediatorScopeException.
+await using (var mediatorScope = provider.CreateMediatorScope())
 {
-    throw new InvalidOperationException($"Unexpected package smoke-test response: '{response}'.");
+    var guardTriggered = false;
+    try
+    {
+        _ = provider.GetRequiredService<IMediator>();
+    }
+    catch (SimpleMediator.Core.MediatorScopeException)
+    {
+        guardTriggered = true;
+    }
+
+    if (!guardTriggered)
+    {
+        throw new InvalidOperationException("Resolving IMediator from the root provider did not throw MediatorScopeException.");
+    }
+
+    var sender = mediatorScope.ServiceProvider.GetRequiredService<ISender>();
+    var response = await sender.Send(new SmokeRequest("package"));
+
+    if (!string.Equals(response, "handled:package", StringComparison.Ordinal))
+    {
+        throw new InvalidOperationException($"Unexpected package smoke-test response: '{response}'.");
+    }
+
+    Console.WriteLine(response);
 }
 
-Console.WriteLine(response);
 
 public sealed record SmokeRequest(string Value) : IRequest<string>;
 

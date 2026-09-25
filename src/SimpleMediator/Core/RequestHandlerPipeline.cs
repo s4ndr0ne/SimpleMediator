@@ -78,10 +78,14 @@ internal static class RequestHandlerPipeline
         {
             var behavior = behaviorList[behaviorOrder[index]];
             var next = aggregate;
-            aggregate = ct => behavior.Handle(request, next, ct);
+            // Check each behavior's own result so a null Task is reported against the behavior
+            // that actually returned it. Checking only the outermost result used to blame the
+            // innermost behavior. The throw is synchronous, so the caller's await surfaces it as
+            // an ordinary exception without an extra state machine per behavior.
+            aggregate = ct => behavior.Handle(request, next, ct) ?? throw NullTaskException(behavior);
         }
 
-        return await Await(aggregate(cancellationToken), behaviorList[behaviorOrder[0]]).ConfigureAwait(false);
+        return await aggregate(cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -163,8 +167,7 @@ internal static class RequestHandlerPipeline
     {
         if (task is null)
         {
-            throw new InvalidOperationException(
-                $"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
+            throw NullTaskException(source);
         }
 
         await task.ConfigureAwait(false);
@@ -174,12 +177,14 @@ internal static class RequestHandlerPipeline
     {
         if (task is null)
         {
-            throw new InvalidOperationException(
-                $"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
+            throw NullTaskException(source);
         }
 
         return await task.ConfigureAwait(false);
     }
+
+    private static InvalidOperationException NullTaskException(object source)
+        => new($"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
 
     private static int[] BuildBehaviorOrder<TRequest, TResponse>(
         IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)

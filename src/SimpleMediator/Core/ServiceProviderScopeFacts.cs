@@ -12,25 +12,37 @@ internal static class ServiceProviderScopeFacts
     /// provider rather than a scope.
     /// </summary>
     /// <remarks>
-    /// Microsoft.Extensions.DependencyInjection implements <see cref="IServiceScope"/> on every
-    /// scope it creates, but not on the root <c>ServiceProvider</c>. The check therefore uses a
-    /// documented public interface instead of internal type names. The root provider is still a
-    /// legal place to <em>create</em> scopes; it is only illegal to resolve mediator services
-    /// from it directly (see <see cref="Mediator"/>).
+    /// Microsoft.Extensions.DependencyInjection gives the root provider's internal scope and every
+    /// caller-created scope the same runtime type, so the type tells us nothing. The discriminator is
+    /// the scope factory: <see cref="IServiceScopeFactory"/> always resolves to the container's root
+    /// scope. Two shapes are therefore recognised as "root":
+    /// <list type="bullet">
+    /// <item>the root scope itself, which is what a service resolved from the root receives as its
+    /// <see cref="IServiceProvider"/> (it <em>is</em> the scope factory);</item>
+    /// <item>the public root <c>ServiceProvider</c> object, as passed to <c>new Mediator(root)</c>,
+    /// which is not the scope factory but resolves <see cref="IServiceProvider"/> to it.</item>
+    /// </list>
+    /// A caller-created scope is neither. The check is advisory: on a container that wires these
+    /// services differently it returns <c>false</c> rather than rejecting a legitimate mediator.
+    /// Only Microsoft.Extensions.DependencyInjection is supported.
     /// </remarks>
     public static bool IsRootProvider(IServiceProvider serviceProvider)
     {
         ArgumentNullException.ThrowIfNull(serviceProvider);
 
-        // Microsoft.Extensions.DependencyInjection hands every scope — including the one the root
-        // provider uses internally — the same runtime type, so the type itself tells us nothing.
-        // What does distinguish them is the scope factory: `IServiceScopeFactory` is always the
-        // container's ROOT scope, and a service resolved from that root scope is handed that very
-        // object. A service resolved from a caller-created scope receives a different instance.
-        //
-        // The comparison is deliberately advisory. If a container wires the scope factory
-        // differently the guard simply does not fire rather than rejecting a legitimate mediator.
-        return ReferenceEquals(serviceProvider, serviceProvider.GetService<IServiceScopeFactory>());
+        var scopeFactory = serviceProvider.GetService<IServiceScopeFactory>();
+        if (scopeFactory is null)
+        {
+            return false;
+        }
+
+        if (ReferenceEquals(serviceProvider, scopeFactory))
+        {
+            return true;
+        }
+
+        var self = serviceProvider.GetService<IServiceProvider>();
+        return !ReferenceEquals(self, serviceProvider) && ReferenceEquals(self, scopeFactory);
     }
 }
 

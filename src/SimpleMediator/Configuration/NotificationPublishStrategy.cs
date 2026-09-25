@@ -1,7 +1,7 @@
 namespace SimpleMediator;
 
 /// <summary>
-/// Controls how <see cref="Interfaces.IMediator.Publish{TNotification}"/> dispatches a
+/// Controls how <see cref="Interfaces.IPublisher.Publish{TNotification}"/> dispatches a
 /// notification to its registered handlers.
 /// </summary>
 public enum NotificationPublishStrategy

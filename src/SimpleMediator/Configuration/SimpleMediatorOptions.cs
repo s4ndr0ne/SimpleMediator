@@ -16,6 +16,7 @@ public class SimpleMediatorOptions
     private ServiceLifetime? _defaultLifetime;
     private NotificationPublishStrategy? _notificationPublishStrategy;
     private int? _openGenericResolutionCacheCapacity;
+    private bool? _requireScopedMediator;
 
     /// <summary>
     /// The default service lifetime used when registering discovered handlers and behaviors in DI.
@@ -64,6 +65,7 @@ public class SimpleMediatorOptions
 
     internal bool HasCustomPublishStrategy => _notificationPublishStrategy.HasValue;
     internal bool HasCustomCacheCapacity => _openGenericResolutionCacheCapacity.HasValue;
+    internal bool HasCustomRequireScopedMediator => _requireScopedMediator.HasValue;
 
     /// <summary>
     /// Per-assembly discovery filters registered through
@@ -85,8 +87,18 @@ public class SimpleMediatorOptions
     /// Set this to <c>false</c> only when root-owned dispatch is deliberate and every handler
     /// dependency is itself a singleton.
     /// </para>
+    /// <para>
+    /// With modular registration (several <c>AddSimpleMediator</c> calls) a call that does not set
+    /// this property keeps the value configured by earlier calls. Two calls that set it explicitly to
+    /// <em>different</em> values are a configuration error: one module cannot silently disable the
+    /// guard for the others.
+    /// </para>
     /// </summary>
-    public bool RequireScopedMediator { get; set; } = true;
+    public bool RequireScopedMediator
+    {
+        get => _requireScopedMediator ?? true;
+        set => _requireScopedMediator = value;
+    }
 
     /// <summary>
     /// Registers an assembly to scan for request handlers, notification handlers, pre/post processors,

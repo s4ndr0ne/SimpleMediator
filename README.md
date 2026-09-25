@@ -1,7 +1,7 @@
 # SimpleMediator
-A lightweight, high-performance implementation of the mediator pattern in .NET, optimized for microservices and high-throughput scenarios.
+A lightweight implementation of the mediator pattern for .NET, built on Microsoft.Extensions.DependencyInjection.
 
-SimpleMediator is designed to be fast, reliable, and "DI-friendly", following modern .NET practices like correct scope management and minimal reflection overhead.
+SimpleMediator focuses on predictable behaviour rather than raw speed: correct DI scope handling, explicit failure contracts, and fail-fast validation. Dispatch overhead is small but it is a reflection-plus-DI design, not a source-generated one; see [What the performance actually consists of](#what-the-performance-actually-consists-of).
 
 [![.NET](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml)
 [![GitHub](https://img.shields.io/badge/GitHub-s4ndr0ne%2FSimpleMediator-181717?logo=github)](https://github.com/s4ndr0ne/SimpleMediator)
@@ -12,8 +12,9 @@ SimpleMediator is designed to be fast, reliable, and "DI-friendly", following mo
 
 ## Core Features & Optimizations
 
-- **🚀 High Performance Dispatch**: Uses cached **Compiled Expression Trees** (MSIL) for mediator wrapper dispatch, while handler instances are still resolved correctly through Microsoft Dependency Injection.
-- **🛡️ Enforced Scope Correctness**: Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers, and resolving `IMediator` from the root provider — which would silently turn every one of them into a process-wide singleton — is rejected at startup. See [Resolve the mediator from a scope](#2-resolve-the-mediator-from-a-scope-not-from-the-root).
+- **🚀 Cached Dispatch**: One typed wrapper per request/notification type is created on first use and cached, so steady-state dispatch involves no reflection; handlers, behaviors and pre/post handlers are then resolved through Microsoft DI on every call so lifetimes stay correct.
+- **🛡️ Scope Correctness**: Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers, and resolving the mediator from the root provider — which would silently turn every one of them into a process-wide singleton — throws `MediatorScopeException` when it is resolved. See [Resolve the mediator from a scope](#2-resolve-the-mediator-from-a-scope-not-from-the-root).
+- **✂️ Segregated interfaces**: depend on `ISender` (requests) or `IPublisher` (notifications) instead of the full `IMediator`.
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
@@ -23,6 +24,25 @@ This library is intended to be used as a NuGet package. To install it, use the .
 ```bash
 dotnet add package s4ndr0ne.SimpleMediator
 ```
+
+## Supported DI container
+
+SimpleMediator supports **only Microsoft.Extensions.DependencyInjection** (the default container of
+ASP.NET Core, the Generic Host, Azure Functions and Worker Services). Every behaviour documented here
+— scope handling, the root-mediator guard, open-generic resolution and constraint filtering, the
+order in which `GetServices<T>()` returns handlers and behaviors, disposal of custom-mapped handlers —
+is implemented and tested against that container only.
+
+Third-party containers plugged in through `IServiceProviderFactory` (Autofac, Lamar, DryIoc,
+SimpleInjector, …) are **not supported**. They may appear to work, but known differences include:
+
+- the root-mediator guard relies on how Microsoft DI resolves `IServiceScopeFactory`; on another
+  container it silently never fires, so a root-owned mediator is no longer detected;
+- enumeration order, open-generic constraint handling and disposal semantics differ between
+  containers, which changes behavior ordering and "one handler per request" detection.
+
+If you must use another container, keep the mediator and its handlers in a Microsoft DI
+`IServiceCollection` and validate the behaviours your application relies on with your own tests.
 
 ## Getting Started
 
@@ -67,8 +87,12 @@ var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 await mediator.Send(new PingRequest("Hello"));
 ```
 
-Resolving `IMediator` from the root provider throws `MediatorScopeException` while the mediator is
-being resolved, so the mistake surfaces at startup rather than under load. To accept the
+Resolving `IMediator`, `ISender` or `IPublisher` from the root provider throws
+`MediatorScopeException` at the moment it is resolved. For a singleton that injects the mediator
+this happens when the singleton is first constructed (at startup if it is created eagerly, e.g. a
+hosted service), so the mistake surfaces as an exception instead of as shared state under load.
+The guard covers both resolution through DI and a `Mediator` constructed by hand with
+`new Mediator(rootProvider)`. To accept the
 root-owned trade-off deliberately — only correct when *every* handler dependency is a singleton —
 set:
 
@@ -103,12 +127,49 @@ the returned `IMediatorScope` exposes `Mediator` and `ServiceProvider` and imple
 
 > **How the check works.** MS DI gives the root provider and every scope the same runtime type, so
 > the discriminator is the scope factory: `IServiceScopeFactory` always resolves to the container's
-> root scope, and a service resolved *from* the root scope is handed that exact object. The
+> root scope. A service resolved *from* the root is handed that exact object as its
+> `IServiceProvider`; the public root `ServiceProvider` (what `new Mediator(root)` receives) is not
+> that object but resolves `IServiceProvider` to it. A caller-created scope matches neither. The
 > comparison is advisory by design — a container that wires the scope factory differently simply
-> does not trigger the guard instead of rejecting a valid mediator.
+> does not trigger the guard instead of rejecting a valid mediator. This is one of the reasons only
+> Microsoft DI is supported (see [Supported DI container](#supported-di-container)).
 
 
 ## Usage
+
+### `ISender`, `IPublisher` and `IMediator`
+
+`IMediator` is the union of two narrower interfaces:
+
+| Interface | Members | Typical consumer |
+|---|---|---|
+| `ISender` | `Send<TResponse>(IRequest<TResponse>)`, `Send(IRequest)` | controllers, endpoints, application services |
+| `IPublisher` | `Publish<TNotification>(TNotification)` | domain-event dispatchers, outbox relays |
+| `IMediator : ISender, IPublisher` | all of the above | components that need both |
+
+`AddSimpleMediator` registers all three as transient services. `ISender` and `IPublisher` forward to
+the `IMediator` registration, so replacing `IMediator` (for example with a test double registered
+before `AddSimpleMediator`) is honoured by all three. The same scope rules apply: resolve them inside
+the request or operation scope.
+
+```csharp
+public sealed class OrdersController(ISender sender) : ControllerBase
+{
+    [HttpPost]
+    public Task<OrderId> Create(CreateOrder command, CancellationToken ct) => sender.Send(command, ct);
+}
+
+public sealed class DomainEventDispatcher(IPublisher publisher)
+{
+    public async Task DispatchAsync(IEnumerable<INotification> events, CancellationToken ct)
+    {
+        foreach (var domainEvent in events)
+        {
+            await publisher.Publish(domainEvent, ct); // dispatched on the runtime type
+        }
+    }
+}
+```
 
 ### Request/Response
 Requests are point-to-point messages that return a result.
@@ -128,7 +189,7 @@ public class PingRequestHandler : IRequestHandler<PingRequest, string>
 var response = await mediator.Send(new PingRequest("Hello"));
 ```
 
-> **AOT/trimming:** the public `IMediator`/`Mediator` dispatch methods are annotated because
+> **AOT/trimming:** the public `ISender`/`IPublisher` (and therefore `IMediator`) and `Mediator` dispatch methods are annotated because
 > wrapper creation uses reflection and runtime code generation. SimpleMediator currently targets
 > JIT hosts; Native AOT and trimming are not supported without an application-specific verification
 > strategy. See [AOT & Trimming](#aot--trimming) for what this means for a trimming-enabled build.
@@ -266,9 +327,20 @@ Native-compatible handlers are registered as ordinary open-generic DI services. 
 > (or Transient) for this handler, or register a closed handler instead.
 > ```
 >
-> This check runs on every `AddSimpleMediator` call, not only under `ValidateOnBuild`. A handler
-> depending on a type parameter it will only learn once closed (for example
-> `Handler<T>(IRepo<T> repo)`) is rejected for the same reason: its lifetime is unknowable up front.
+> This check runs on every `AddSimpleMediator` call, not only under `ValidateOnBuild`. It reads
+> lifetimes the way Microsoft DI resolves them:
+>
+> - a single dependency uses its **last** non-keyed registration; an `IEnumerable<T>` dependency is
+>   rejected if **any** registration of `T` is `Scoped` or `Transient`;
+> - a dependency closed over the handler's own type parameter (for example
+>   `Handler<T>(IRepo<T> repo)` or `ILogger<Handler<T>>`) is checked against its open-generic
+>   registration (`IRepo<>`, `ILogger<>`); with no open-generic registration its lifetime is
+>   unknowable up front and the handler is rejected;
+> - the constructor marked `[ActivatorUtilitiesConstructor]` is checked, otherwise every public
+>   constructor.
+>
+> Only direct constructor dependencies are checked. Enable the host's `ValidateScopes` to catch a
+> scoped service reached indirectly.
 >
 > Handler decoration is not supported by the single-handler resolver; use `IPipelineBehavior<,>` for
 > cross-cutting concerns.
@@ -351,7 +423,8 @@ Basic structural validation runs during **every** `AddSimpleMediator` call, with
 
 - open-generic mappings that Microsoft DI cannot close, and scanned open-generic request handlers with no inferable mapping;
 - concrete handler/behavior implementations that are abstract, non-public-constructor, or not activatable by DI;
-- a `Singleton` custom-mapped open-generic handler with a `Scoped` or `Transient` constructor dependency (see [Lifetimes of custom-mapped open-generic handlers](#open-generic-request-handlers));
+- a `Singleton` custom-mapped open-generic handler with a `Scoped` or `Transient` direct constructor dependency (see [Lifetimes of custom-mapped open-generic handlers](#open-generic-request-handlers));
+- `RequireScopedMediator` set to conflicting values by different `AddSimpleMediator` calls;
 - a behavior registered twice for the same request/response pair with conflicting lifetimes.
 
 `ValidateOnBuild` (or an explicit `services.ValidateSimpleMediator()`) additionally enables the *conflict* checks, which are the ones that would otherwise surface on live traffic:
@@ -365,7 +438,7 @@ Conflict validation can only see request types that have a closed registration; 
 > an ambiguity surfaces as a `RequestHandlerResolutionException` on the *first request* that hits it
 > — i.e. in production, under load, on one endpoint.
 
-> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. Scanned types are ordered by `FullName` within each assembly so composition does not depend on reflection enumeration order. Explicitly configured `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` override previous values; a later call that leaves them at their defaults preserves the existing module configuration. `RequireScopedMediator` is sticky in the safe direction: it stays enabled if any module enabled it. Once `ValidateOnBuild` is enabled by any module—or `ValidateSimpleMediator()` is called explicitly—subsequent modular calls keep validation enabled so newly added registrations are checked as part of the accumulated composition.
+> **Modular registration:** `AddSimpleMediator` may be called more than once — e.g. once per module. Closed handlers accumulate, and scanned open-generic handlers are merged across calls. Scanned types are ordered by `FullName` within each assembly so composition does not depend on reflection enumeration order. Explicitly configured `NotificationPublishStrategy` and `OpenGenericResolutionCacheCapacity` override previous values; a later call that leaves them at their defaults preserves the existing module configuration. `RequireScopedMediator` follows the same rule — a call that does not set it keeps the earlier value — with one addition: two calls that set it explicitly to *different* values throw `InvalidOperationException`, so one module cannot silently disable the guard for the others. Once `ValidateOnBuild` is enabled by any module—or `ValidateSimpleMediator()` is called explicitly—subsequent modular calls keep validation enabled so newly added registrations are checked as part of the accumulated composition.
 
 ## Assembly Scanning Rules
 
@@ -449,9 +522,9 @@ dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks 
 The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. Both the mediator and the baseline handler are resolved from a scope, and the baseline handler is `async`, so the comparison isolates mediator dispatch overhead instead of measuring a completed task against a state machine. `MediatorSend_WithBehaviors` measures the cost of a three-behavior chain. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
-Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The implementation relies on assembly scanning, `Expression.Compile`, runtime `MakeGenericType`, and `ActivatorUtilities`, and the supported deployment target is classic JIT execution such as standard ASP.NET Core.
+Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The implementation relies on assembly scanning, runtime `MakeGenericType`, `Activator.CreateInstance`, and `ActivatorUtilities`, and the supported deployment target is classic JIT execution such as standard ASP.NET Core.
 
-`AddSimpleMediator`, `IMediator`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
+`AddSimpleMediator`, `ISender`, `IPublisher`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
 
 > **Consumer builds with trimming or AOT.** Those annotations mean a project with `PublishTrimmed`
 > or `PublishAot` **and** `TreatWarningsAsErrors` fails to compile on `AddSimpleMediator` and on
@@ -473,22 +546,24 @@ The package does not inject transitive global usings into consumer projects. Add
 
 SimpleMediator uses a **hybrid approach**:
 1. **Discovery**: Reflection is used once at startup to find handlers.
-2. **Compilation**: The first time a request or notification type is used, an **Expression Tree** is compiled into a cached wrapper factory. Concurrent first use is coalesced so only one factory is compiled per cache key.
-3. **Execution**: Subsequent calls reuse the cached wrapper factory, while actual handlers and pipeline services are resolved through Microsoft Dependency Injection so lifetimes and scopes remain correct.
+2. **Wrapper creation**: The first time a request or notification type is used, SimpleMediator closes a generic wrapper type (`MakeGenericType`) and instantiates it once with `Activator.CreateInstance`; the instance is cached. Concurrent first use is coalesced so only one wrapper is created per cache key.
+3. **Execution**: Subsequent calls reuse the cached wrapper, which calls your handler through ordinary typed generic code, while handlers and pipeline services are resolved through Microsoft Dependency Injection on every call so lifetimes and scopes remain correct.
 
 ### What the performance actually consists of
 
 Per `Send`, on top of your handler's own work, SimpleMediator performs:
 
 - one bounded-cache lookup keyed by `(requestType, responseType)` — lock-free on the hot path;
-- `GetServices<IRequestHandler<,>>()` for handler selection plus one each for pre-handlers, post-handlers and behaviors: four resolutions, each materialising an array;
+- `GetServices<IRequestHandler<,>>()` for handler selection plus one each for pre-handlers, post-handlers and behaviors: four enumerable resolutions, each materialising an array, plus a `GetService<MediatorConfiguration>()` and an open-generic plan lookup;
 - one handler delegate allocation plus one closure per behavior;
 - one `Order` snapshot and, only when registration order is not already correct, one sort;
 - the async state machines of the behavior chain.
 
-The compiled-expression wrapper removes reflection from the *first* hop, but the per-request DI resolutions and delegate allocations dominate. Measure with the suite above rather than assuming a number.
+Resolving the mediator itself (it is transient) costs two more lookups: the configuration and, for the root guard, `IServiceScopeFactory`.
 
-The wrapper caches are bounded (1024 entries, FIFO eviction) and hold `Type` keys, so types from a collectible `AssemblyLoadContext` can be retained until evicted. That is bounded and small, but a plugin host that unloads module ALCs will not see them collected immediately.
+The cached wrapper removes reflection from the per-call path, but the per-request DI resolutions and delegate allocations dominate. No comparative benchmark against other mediator libraries is published; measure with the suite above rather than assuming a number.
+
+The wrapper caches are **unbounded**: one small wrapper per request/response pair or notification type actually dispatched, which is a finite set. They live on the container's configuration singleton, never in a static, so they are released with the container — the same lifetime for which Microsoft DI itself retains every service type it has resolved. A plugin host that unloads a collectible `AssemblyLoadContext` must therefore dispose the container that dispatched that context's types, as it already must for Microsoft DI. (Before 4.0 these caches were bounded at 1024 entries with FIFO eviction, which made dispatch cost jump for applications with more distinct request types than that.) The open-generic resolution-plan cache remains bounded by `OpenGenericResolutionCacheCapacity`.
 
 ## Known limitations
 
@@ -498,7 +573,8 @@ The wrapper caches are bounded (1024 entries, FIFO eviction) and hold `Type` key
 - No handler decoration: one handler per request and no built-in decorator chain. Use `IPipelineBehavior<,>` for cross-cutting concerns.
 - Handler and notification matching is **exact**, not contravariant. A handler registered for a base request or notification does not receive derived ones, even though the interfaces are declared contravariant.
 - No per-request transaction or outbox; see [Partial commits](#exactly-what-reaches-an-exception-handler).
-- The root-mediator guard depends on how Microsoft DI wires `IServiceScopeFactory`. It is advisory by design and simply does not fire on a container that differs.
+- Only Microsoft.Extensions.DependencyInjection is supported (see [Supported DI container](#supported-di-container)). The root-mediator guard is advisory and does not fire on other containers.
+- Notifications have no pipeline: behaviors, pre/post handlers and exception handlers apply to requests only.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

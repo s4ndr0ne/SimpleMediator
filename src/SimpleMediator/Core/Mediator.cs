@@ -1,4 +1,3 @@
-using System.Linq.Expressions;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
@@ -13,8 +12,8 @@ public class Mediator : IMediator
     private readonly IServiceProvider _serviceProvider;
     // Wrapper caches belong to the DI configuration. This avoids a process-wide static cache
     // retaining types from collectible plugin AssemblyLoadContexts.
-    private readonly BoundedFactoryCache<(Type Request, Type Response), object> _requestHandlerWrappers;
-    private readonly BoundedFactoryCache<Type, object> _notificationHandlerWrappers;
+    private readonly WrapperCache<(Type Request, Type Response)> _requestHandlerWrappers;
+    private readonly WrapperCache<Type> _notificationHandlerWrappers;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Mediator"/> class.
@@ -45,10 +44,12 @@ public class Mediator : IMediator
                 "To accept this trade-off explicitly, set 'SimpleMediatorOptions.RequireScopedMediator = false'.");
         }
 
+        // Without AddSimpleMediator there is no configuration singleton to share the caches through,
+        // so a directly constructed mediator keeps its own.
         _requestHandlerWrappers = configuration?.RequestHandlerWrappers
-            ?? new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
+            ?? new WrapperCache<(Type Request, Type Response)>();
         _notificationHandlerWrappers = configuration?.NotificationHandlerWrappers
-            ?? new BoundedFactoryCache<Type, object>(1024);
+            ?? new WrapperCache<Type>();
     }
 
     /// <inheritdoc />
@@ -73,8 +74,10 @@ public class Mediator : IMediator
         // use explicit generic response types.
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlerWrappers.GetOrAdd((requestType, typeof(TResponse)), key =>
         {
+            // Created once per type and cached; the wrapper is then invoked through typed generic
+            // code, so no reflection remains on the per-call path.
             var wrapperType = typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response);
-            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile()();
+            return Activator.CreateInstance(wrapperType)!;
         });
 
         return await handler.Handle(request, _serviceProvider, cancellationToken).ConfigureAwait(false);
@@ -92,7 +95,7 @@ public class Mediator : IMediator
         var handler = (NotificationHandlerWrapper)_notificationHandlerWrappers.GetOrAdd(notificationType, t =>
         {
             var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
-            return Expression.Lambda<Func<object>>(Expression.New(wrapperType)).Compile()();
+            return Activator.CreateInstance(wrapperType)!;
         });
 
         await handler.Handle(notification, _serviceProvider, cancellationToken).ConfigureAwait(false);

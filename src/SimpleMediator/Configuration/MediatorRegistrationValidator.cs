@@ -71,54 +71,100 @@ internal static class MediatorRegistrationValidator
             }
 
             var handlerType = registration.ImplementationType;
-            var constructor = handlerType.GetConstructors(BindingFlags.Instance | BindingFlags.Public)
-                                   .OrderByDescending(candidate => candidate.GetParameters().Length)
-                                   .FirstOrDefault();
-            if (constructor is null)
+            foreach (var constructor in CandidateConstructors(handlerType))
             {
-                continue;
-            }
-
-            foreach (var parameter in constructor.GetParameters())
-            {
-                // A generic parameter (for example TDependency) can only be closed later, so its
-                // lifetime cannot be checked here. Such a handler must be registered as Scoped.
-                if (parameter.ParameterType.ContainsGenericParameters)
+                foreach (var parameter in constructor.GetParameters())
                 {
-                    throw new InvalidOperationException(
-                        $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
-                        $"constructor depends on the open generic type '{parameter.ParameterType.Name}'. A singleton " +
-                        "custom-mapped open-generic handler cannot have a lifetime that is only known once the type is " +
-                        "closed. Use ServiceLifetime.Scoped (or Transient) for this handler, or register it as a closed type.");
-                }
-
-                var descriptor = services.FirstOrDefault(candidate =>
-                    candidate.ServiceType == parameter.ParameterType);
-                if (descriptor is null)
-                {
-                    continue;
-                }
-
-                if (descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient)
-                {
-                    throw new InvalidOperationException(
-                        $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
-                        $"constructor depends on '{parameter.ParameterType.FullName}', which is registered as " +
-                        $"{descriptor.Lifetime}. SimpleMediator builds this handler once and reuses it for the whole " +
-                        "application, so it would capture — and outlive — that dependency, handing out a disposed " +
-                        "instance to later requests. Use ServiceLifetime.Scoped (or Transient) for this handler, or " +
-                        "register a closed handler instead.");
+                    ValidateSingletonDependency(services, handlerType, parameter.ParameterType);
                 }
             }
         }
     }
 
     /// <summary>
-    /// Validates that closed request handlers do not conflict with native open-generic DI
-    /// registrations. Behavior lifetime conflicts are detected earlier, in
-    /// <see cref="ServiceCollectionExtensions.AddBehavior"/>, because <c>TryAddEnumerable</c> would
-    /// otherwise discard the second descriptor before any validator could see it.
+    /// The constructors Microsoft DI may use to build <paramref name="implementationType"/>: the one
+    /// marked with <see cref="ActivatorUtilitiesConstructorAttribute"/> when present, otherwise every
+    /// public constructor. Checking all of them is deliberately conservative — a lifetime error in any
+    /// constructor the container could pick is still a latent production failure.
     /// </summary>
+    private static ConstructorInfo[] CandidateConstructors(Type implementationType)
+    {
+        var constructors = implementationType.GetConstructors(BindingFlags.Instance | BindingFlags.Public);
+        var marked = constructors.Where(constructor => constructor.IsDefined(typeof(ActivatorUtilitiesConstructorAttribute), false)).ToArray();
+        return marked.Length > 0 ? marked : constructors;
+    }
+
+    private static void ValidateSingletonDependency(IServiceCollection services, Type handlerType, Type dependencyType)
+    {
+        // A dependency on IEnumerable<T> receives every registration of T, so the shortest-lived of
+        // them decides whether the singleton would capture a scoped or transient instance.
+        var isEnumerable = dependencyType.IsGenericType &&
+                           dependencyType.GetGenericTypeDefinition() == typeof(IEnumerable<>);
+        var serviceType = isEnumerable ? dependencyType.GetGenericArguments()[0] : dependencyType;
+
+        if (serviceType.IsGenericParameter)
+        {
+            throw UnknowableDependency(handlerType, dependencyType);
+        }
+
+        var descriptors = FindDescriptors(services, serviceType);
+        if (descriptors.Count == 0)
+        {
+            // Not registered at all: DI reports that itself. But a dependency whose closed type is only
+            // known once the handler is closed, with no open-generic registration to read a lifetime
+            // from, cannot be checked up front.
+            if (serviceType.ContainsGenericParameters)
+            {
+                throw UnknowableDependency(handlerType, dependencyType);
+            }
+
+            return;
+        }
+
+        // Microsoft DI resolves a single service from the LAST registration; an enumerable receives
+        // all of them.
+        IEnumerable<ServiceDescriptor> relevant = isEnumerable ? descriptors : [descriptors[^1]];
+        var offending = relevant.FirstOrDefault(descriptor => descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient);
+        if (offending is null)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
+            $"constructor depends on '{dependencyType.FullName ?? dependencyType.Name}', which is registered as " +
+            $"{offending.Lifetime}. SimpleMediator builds this handler once and reuses it for the whole " +
+            "application, so it would capture — and outlive — that dependency, handing out a disposed " +
+            "instance to later requests. Use ServiceLifetime.Scoped (or Transient) for this handler, or " +
+            "register a closed handler instead.");
+    }
+
+    /// <summary>
+    /// Registrations that can satisfy <paramref name="serviceType"/>: exact matches, or — for a
+    /// constructed generic such as <c>ILogger&lt;Handler&lt;T&gt;&gt;</c> — registrations of its
+    /// open-generic definition (<c>ILogger&lt;&gt;</c>). Returned in registration order.
+    /// </summary>
+    private static List<ServiceDescriptor> FindDescriptors(IServiceCollection services, Type serviceType)
+    {
+        // A constructor parameter without [FromKeyedServices] is satisfied by non-keyed registrations only.
+        var exact = services.Where(descriptor => !descriptor.IsKeyedService && descriptor.ServiceType == serviceType).ToList();
+        if (exact.Count > 0 || !serviceType.IsGenericType)
+        {
+            return exact;
+        }
+
+        var definition = serviceType.GetGenericTypeDefinition();
+        return services.Where(descriptor => !descriptor.IsKeyedService && descriptor.ServiceType == definition).ToList();
+    }
+
+    private static InvalidOperationException UnknowableDependency(Type handlerType, Type dependencyType)
+        => new(
+            $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
+            $"constructor depends on the open generic type '{dependencyType.Name}', and no open-generic " +
+            "registration exists to read its lifetime from. A singleton custom-mapped open-generic handler " +
+            "cannot have a dependency whose lifetime is only known once the type is closed. Register the " +
+            "dependency as an open generic, use ServiceLifetime.Scoped (or Transient) for this handler, or " +
+            "register it as a closed type.");
 
     private static void ValidateScannedOpenGenericHandlers(IServiceCollection services)
     {

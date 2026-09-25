@@ -22,6 +22,12 @@ internal sealed class MediatorConfiguration
     public bool RequireScopedMediator { get; }
 
     /// <summary>
+    /// Whether <see cref="RequireScopedMediator"/> was set explicitly by at least one
+    /// <c>AddSimpleMediator</c> call, as opposed to being the default.
+    /// </summary>
+    public bool RequireScopedMediatorIsExplicit { get; }
+
+    /// <summary>
     /// Open-generic request-handler implementation types that need custom type-argument
     /// inference (e.g. <c>EchoHandler&lt;T&gt; : IRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c>).
     /// Handlers compatible with native open-generic DI registration are registered directly
@@ -32,25 +38,25 @@ internal sealed class MediatorConfiguration
     // Caches the *resolution plan* (matched closed types + compiled factories) per
     // request/response pair — never the handler instance, so scoped dependencies stay correct.
     private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _resolutionCache;
-    internal readonly BoundedFactoryCache<(Type Request, Type Response), object> RequestHandlerWrappers;
-    internal readonly BoundedFactoryCache<Type, object> NotificationHandlerWrappers;
+    internal readonly WrapperCache<(Type Request, Type Response)> RequestHandlerWrappers = new();
+    internal readonly WrapperCache<Type> NotificationHandlerWrappers = new();
 
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
         IReadOnlyList<OpenGenericHandlerRegistration>? customOpenGenericRequestHandlers = null,
         int resolutionCacheCapacity = 1024,
         bool validationRequested = false,
-        bool requireScopedMediator = true)
+        bool requireScopedMediator = true,
+        bool requireScopedMediatorIsExplicit = false)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
         ResolutionCacheCapacity = resolutionCacheCapacity;
         ValidationRequested = validationRequested;
         RequireScopedMediator = requireScopedMediator;
+        RequireScopedMediatorIsExplicit = requireScopedMediatorIsExplicit;
         CustomOpenGenericRequestHandlers = customOpenGenericRequestHandlers ?? NoRegistrations;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
-        RequestHandlerWrappers = new BoundedFactoryCache<(Type Request, Type Response), object>(1024);
-        NotificationHandlerWrappers = new BoundedFactoryCache<Type, object>(1024);
     }
 
     internal void RequestValidation() => ValidationRequested = true;

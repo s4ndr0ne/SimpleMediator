@@ -14,7 +14,7 @@ public static class ServiceCollectionExtensions
     internal const string ReflectionMessage =
         "SimpleMediator scans assemblies and resolves handlers via reflection; the referenced handler types may be removed by trimming.";
     internal const string DynamicCodeMessage =
-        "SimpleMediator compiles expression trees and constructs generic handler types at runtime, which is not supported by Native AOT.";
+        "SimpleMediator constructs generic wrapper and handler types at runtime (MakeGenericType), which is not supported by Native AOT.";
 
     /// <summary>
     /// Registers SimpleMediator services and handlers in the specified <see cref="IServiceCollection"/>.
@@ -22,6 +22,12 @@ public static class ServiceCollectionExtensions
     /// <param name="services">The service collection to configure.</param>
     /// <param name="configure">An action to configure <see cref="SimpleMediatorOptions"/>.</param>
     /// <returns>The service collection for chaining.</returns>
+    /// <remarks>
+    /// Registers <see cref="IMediator"/>, <see cref="ISender"/> and <see cref="IPublisher"/>.
+    /// Only Microsoft.Extensions.DependencyInjection is a supported container: scope detection,
+    /// open-generic resolution, enumeration order and disposal are implemented and tested against it,
+    /// and may behave differently when the collection is built by a third-party container.
+    /// </remarks>
     [RequiresUnreferencedCode(ReflectionMessage)]
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection AddSimpleMediator(this IServiceCollection services, Action<SimpleMediatorOptions> configure)
@@ -57,6 +63,10 @@ public static class ServiceCollectionExtensions
         // Transient registration ensures a mediator resolved inside a scope uses that scope's
         // provider, even when handler lifetimes are configured as singleton.
         services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
+        // ISender and IPublisher forward to IMediator, so a replaced IMediator registration is
+        // honored by all three and each resolution still uses the provider it was resolved from.
+        services.TryAdd(new ServiceDescriptor(typeof(ISender), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
+        services.TryAdd(new ServiceDescriptor(typeof(IPublisher), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
         services.TryAddScoped<OpenGenericScopedLifetimeStore>();
         services.TryAddSingleton<OpenGenericSingletonLifetimeStore>();
 
@@ -180,13 +190,28 @@ public static class ServiceCollectionExtensions
                 .Select(group => group.Last())
                 .ToList();
 
+            if (options.HasCustomRequireScopedMediator &&
+                existing.RequireScopedMediatorIsExplicit &&
+                existing.RequireScopedMediator != options.RequireScopedMediator)
+            {
+                throw new InvalidOperationException(
+                    "SimpleMediatorOptions.RequireScopedMediator is set to conflicting values by different " +
+                    "AddSimpleMediator calls. The root-mediator guard applies to the whole application, so one " +
+                    "module cannot disable it for the others: set it in a single place, or to the same value everywhere.");
+            }
+
+            var requireScopedMediator = options.HasCustomRequireScopedMediator
+                ? options.RequireScopedMediator
+                : existing.RequireScopedMediator;
+
             var validationRequested = existing.ValidationRequested || options.ValidateOnBuild;
             var configuration = new MediatorConfiguration(
                 strategy,
                 mergedHandlers,
                 capacity,
                 validationRequested,
-                existing.RequireScopedMediator && options.RequireScopedMediator);
+                requireScopedMediator,
+                existing.RequireScopedMediatorIsExplicit || options.HasCustomRequireScopedMediator);
 
             services.Remove(existingDescriptor);
             services.AddSingleton(configuration);
@@ -198,7 +223,8 @@ public static class ServiceCollectionExtensions
             customOpenGenericRequestHandlers,
             options.OpenGenericResolutionCacheCapacity,
             options.ValidateOnBuild,
-            options.RequireScopedMediator);
+            options.RequireScopedMediator,
+            options.HasCustomRequireScopedMediator);
         services.AddSingleton(initialConfiguration);
         return initialConfiguration;
     }
