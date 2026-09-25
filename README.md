@@ -125,7 +125,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 }
 ```
 
-Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost). Equal values preserve DI resolution order. `Order` is read from the current behavior instances on each request, so it may depend on scoped state. Assembly scanning does not register behaviors; add each one explicitly. You can register an open generic type or a closed type bound to a specific request/response pair:
+Register behaviors via `AddBehavior`. Execution order is controlled by each behavior's `Order` property (lower runs first / outermost). Equal values run in registration order (FIFO): the first registered behavior is outermost and runs first, like MediatR and ASP.NET Core middleware. `Order` is read from the current behavior instances on each request, so it may depend on scoped state. Assembly scanning does not register behaviors; add each one explicitly. You can register an open generic type or a closed type bound to a specific request/response pair:
 
 ```csharp
 services.AddSimpleMediator(options =>

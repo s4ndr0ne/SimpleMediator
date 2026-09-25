@@ -440,6 +440,7 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         using var provider = services.BuildServiceProvider();
         await provider.GetRequiredService<IMediator>().Send<string>(new OrderedRequest());
 
+        // v4 contract: first registered behavior with equal Order is outermost and runs first (FIFO).
         Assert.Equal(
             new[] { "equal-first:before", "equal-second:before", "handler", "equal-second:after", "equal-first:after" },
             probe.Events.ToArray());

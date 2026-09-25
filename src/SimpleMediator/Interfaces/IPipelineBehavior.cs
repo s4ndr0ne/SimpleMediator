@@ -6,8 +6,9 @@ namespace SimpleMediator.Interfaces;
 public interface IOrderedPipelineBehavior
 {
     /// <summary>
-    /// Execution priority. Lower values run first; behaviors with equal values run in
-    /// their DI resolution order. The value is read from the current instance per request.
+    /// Execution priority. Lower values run first (outermost); behaviors with equal values
+    /// run in registration order (FIFO): the first registered behavior is outermost and
+    /// runs first. The value is read from the current instance per request.
     /// </summary>
     int Order { get; }
 }

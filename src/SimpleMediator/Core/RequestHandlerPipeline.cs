@@ -154,9 +154,10 @@ internal static class RequestHandlerPipeline
         Array.Sort(order, (a, b) =>
         {
             var cmp = behaviors[b].Order.CompareTo(behaviors[a].Order);
-            // The wrapping loop consumes this list from left to right. Reverse the
-            // tie order while building the chain so the first registered behavior
-            // becomes the outermost one and runs first.
+            // v4 contract: for equal Order the first registered behavior becomes the
+            // outermost one and runs first (FIFO, like MediatR / ASP.NET Core middleware).
+            // The wrapping loop consumes this list left to right, so reverse the tie
+            // order here to achieve FIFO execution.
             return cmp != 0 ? cmp : b.CompareTo(a);
         });
 

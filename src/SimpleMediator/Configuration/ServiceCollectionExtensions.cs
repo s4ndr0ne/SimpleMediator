@@ -86,8 +86,9 @@ public static class ServiceCollectionExtensions
 
     private static void RegisterBehaviors(IServiceCollection services, SimpleMediatorOptions options)
     {
-        // Order determines the primary execution sequence. Behaviors with equal Order retain
-        // their DI resolution order; values are evaluated by the wrapper for each request.
+        // Order determines the primary execution sequence. Behaviors with equal Order run
+        // in registration order (FIFO): the first registered behavior is outermost;
+        // values are evaluated by the wrapper for each request.
         foreach (var behaviorType in options.Behaviors)
         {
             if (behaviorType.IsGenericTypeDefinition)

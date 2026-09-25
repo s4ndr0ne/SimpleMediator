@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.0.0]
+
+### Changed
+- **BREAKING:** pipeline behaviors with equal `Order` now run in registration order (FIFO): the first registered behavior is outermost and runs first, matching MediatR / ASP.NET Core middleware semantics. Previously the last registered behavior ran first (LIFO, an artifact of `OrderByDescending` + `Aggregate`). With distinct `Order` values the execution order is unchanged. If you relied on the LIFO tie-break, either assign distinct `Order` values or swap your `AddBehavior` registration order.
+- `IPipelineBehavior.Order` documentation now states the FIFO tie-break contract explicitly.
+
 ### Added
 - .NET analyzers (all rules, warnings as errors) and public API analyzers to enforce API surface stability.
 - Public AOT/trimming annotations on every mediator dispatch entry point, so unsupported runtime-code generation is reported whether the mediator is registered through DI or constructed directly.

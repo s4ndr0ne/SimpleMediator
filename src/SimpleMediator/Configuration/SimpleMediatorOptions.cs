@@ -84,7 +84,8 @@ public class SimpleMediatorOptions
     /// <summary>
     /// Registers a pipeline behavior. Execution order is controlled by the behavior's
     /// <see cref="IPipelineBehavior{TRequest, TResponse}"/> <c>Order</c> property
-    /// (lower runs first / outermost); equal values preserve DI resolution order.
+    /// (lower runs first / outermost); equal values run in registration order (FIFO):
+    /// the first registered behavior is outermost and runs first.
     /// </summary>
     public SimpleMediatorOptions AddBehavior(Type behaviorType)
     {
