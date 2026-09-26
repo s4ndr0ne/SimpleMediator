@@ -57,7 +57,14 @@ are accepted only on a major release and must be marked BREAKING.
 
 ## Releasing
 
-Releases are maintainer-only: tag `vX.Y.Z` and push; the release workflow validates the
-semver tag, builds, tests, packs, smoke-tests the package and creates the GitHub release
-with both packages (runtime nupkg/snupkg and generator nupkg) attached. Both packages always
-ship with the same version. The project follows [Semantic Versioning](https://semver.org).
+The next release after the published `4.0.0` is **`4.1.0`** (minor): the pending changes add
+Native AOT support, a source-generator package and additive runtime APIs, without an intentional
+breaking change. Keep these notes under `[Unreleased]` in `CHANGELOG.md` until the release is
+published. On release day, move them under `## [4.1.0] - YYYY-MM-DD`, leave a fresh `[Unreleased]`
+section above, then create and push the `v4.1.0` tag.
+
+The release workflow validates the semver tag, builds, tests, packs, smoke-tests and creates the
+GitHub release with both packages attached (runtime nupkg/snupkg and generator nupkg). Both
+packages always ship with the same version. The workflow does **not** publish packages to NuGet;
+publishing them there remains a separate maintainer action. The project follows
+[Semantic Versioning](https://semver.org).

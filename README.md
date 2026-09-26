@@ -6,6 +6,7 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 [![.NET](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml)
 [![GitHub](https://img.shields.io/badge/GitHub-s4ndr0ne%2FSimpleMediator-181717?logo=github)](https://github.com/s4ndr0ne/SimpleMediator)
 [![NuGet](https://img.shields.io/nuget/v/s4ndr0ne.SimpleMediator?logo=nuget)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator)
+[![NuGet Source Generator](https://img.shields.io/nuget/v/s4ndr0ne.SimpleMediator.SourceGenerator?logo=nuget&label=NuGet%20Source%20Generator)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator.SourceGenerator)
 [![NuGet Downloads](https://img.shields.io/nuget/dt/s4ndr0ne.SimpleMediator?logo=nuget)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/8.0)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/10.0)

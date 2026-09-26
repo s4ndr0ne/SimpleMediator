@@ -1,9 +1,1 @@
 #nullable enable
-SimpleMediator.Generated.GeneratedMediatorRegistration
-SimpleMediator.Generated.GeneratedMediatorRegistry
-SimpleMediator.Generated.GeneratedMediatorRegistry.AddBehavior<TService, TImplementation>(System.Type! behaviorType) -> void
-SimpleMediator.Generated.GeneratedMediatorRegistry.AddAssembly(System.Reflection.Assembly! assembly) -> void
-SimpleMediator.Generated.GeneratedMediatorRegistry.AddHandler<TService, TImplementation>(System.Type! declaredType) -> void
-SimpleMediator.Generated.GeneratedMediatorRegistry.AddNotification<TNotification>() -> void
-SimpleMediator.Generated.GeneratedMediatorRegistry.AddRequest<TRequest, TResponse>() -> void
-static SimpleMediator.Generated.GeneratedMediatorRegistration.Register(Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.SimpleMediatorOptions!>? configure, System.Action<SimpleMediator.Generated.GeneratedMediatorRegistry!>! populate) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
