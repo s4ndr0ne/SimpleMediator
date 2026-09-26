@@ -10,6 +10,10 @@
     <!-- netstandard2.0 only: IAsyncDisposable and ValueTask for the public surface. -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
+    <!-- Tests and tooling (BenchmarkDotNet needs >= 4.14). The source generator compiles against an
+         older floor through VersionOverride; see src/SimpleMediator.SourceGenerator. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.3.4" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <!-- Latest 8.0 patch. The implementation packages stopped at 8.0.1. -->

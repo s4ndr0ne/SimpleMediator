@@ -5,6 +5,7 @@ using SimpleMediator.Configuration;
 using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 using SimpleMediator.Core;
+using SimpleMediator.Generated;
 
 namespace SimpleMediator;
 
@@ -61,19 +62,10 @@ public static class ServiceCollectionExtensions
     [RequiresDynamicCode(DynamicCodeMessage)]
     private static IServiceCollection AddSimpleMediatorCore(IServiceCollection services, SimpleMediatorOptions options)
     {
-        // The mediator itself is stateless and forwards the ambient provider to its wrappers.
-        // Transient registration ensures a mediator resolved inside a scope uses that scope's
-        // provider, even when handler lifetimes are configured as singleton.
-        services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
-        // ISender and IPublisher forward to IMediator, so a replaced IMediator registration is
-        // honored by all three and each resolution still uses the provider it was resolved from.
-        services.TryAdd(new ServiceDescriptor(typeof(ISender), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
-        services.TryAdd(new ServiceDescriptor(typeof(IPublisher), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
-        services.TryAddScoped<OpenGenericScopedLifetimeStore>();
-        services.TryAddSingleton<OpenGenericSingletonLifetimeStore>();
+        AddMediatorServices(services);
 
         var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers);
+        var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers, generated: null);
 
         RegisterBehaviors(services, options);
 
@@ -87,6 +79,20 @@ public static class ServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    internal static void AddMediatorServices(IServiceCollection services)
+    {
+        // The mediator itself is stateless and forwards the ambient provider to its wrappers.
+        // Transient registration ensures a mediator resolved inside a scope uses that scope's
+        // provider, even when handler lifetimes are configured as singleton.
+        services.TryAdd(new ServiceDescriptor(typeof(IMediator), typeof(Mediator), ServiceLifetime.Transient));
+        // ISender and IPublisher forward to IMediator, so a replaced IMediator registration is
+        // honored by all three and each resolution still uses the provider it was resolved from.
+        services.TryAdd(new ServiceDescriptor(typeof(ISender), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
+        services.TryAdd(new ServiceDescriptor(typeof(IPublisher), static provider => provider.GetRequiredService<IMediator>(), ServiceLifetime.Transient));
+        services.TryAddScoped<OpenGenericScopedLifetimeStore>();
+        services.TryAddSingleton<OpenGenericSingletonLifetimeStore>();
     }
 
     /// <summary>
@@ -138,26 +144,29 @@ public static class ServiceCollectionExtensions
 
     [RequiresUnreferencedCode(ReflectionMessage)]
     private static void AddBehavior(IServiceCollection services, Type serviceType, Type behaviorType, ServiceLifetime lifetime)
+        => AddBehaviorDescriptor(services, new ServiceDescriptor(serviceType, behaviorType, lifetime));
+
+    internal static void AddBehaviorDescriptor(IServiceCollection services, ServiceDescriptor behavior)
     {
         // TryAddEnumerable keeps the FIRST registration for a (service type, implementation type)
         // pair and silently discards later ones, so the effective lifetime would otherwise depend on
         // module ordering. Detect the conflict before the descriptor is dropped.
         var existing = services.LastOrDefault(descriptor =>
-            descriptor.ServiceType == serviceType && descriptor.ImplementationType == behaviorType);
+            descriptor.ServiceType == behavior.ServiceType && descriptor.ImplementationType == behavior.ImplementationType);
 
-        if (existing is not null && existing.Lifetime != lifetime)
+        if (existing is not null && existing.Lifetime != behavior.Lifetime)
         {
             throw new InvalidOperationException(
-                $"Pipeline behavior '{behaviorType.FullName}' is registered for '{serviceType.FullName}' with conflicting " +
-                $"lifetimes ({existing.Lifetime} and {lifetime}). A behavior can only be registered once per " +
+                $"Pipeline behavior '{behavior.ImplementationType?.FullName}' is registered for '{behavior.ServiceType.FullName}' with conflicting " +
+                $"lifetimes ({existing.Lifetime} and {behavior.Lifetime}). A behavior can only be registered once per " +
                 "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
                 "configuration.");
         }
 
-        services.TryAddEnumerable(new ServiceDescriptor(serviceType, behaviorType, lifetime));
+        services.TryAddEnumerable(behavior);
     }
 
-    private static void ValidateOptions(SimpleMediatorOptions options)
+    internal static void ValidateOptions(SimpleMediatorOptions options)
     {
 #if NETSTANDARD2_0
         // The generic Enum.IsDefined overload is not available on netstandard2.0.
@@ -185,11 +194,19 @@ public static class ServiceCollectionExtensions
         ThrowHelper.ThrowIfNegativeOrZero(options.OpenGenericResolutionCacheCapacity);
     }
 
-    private static MediatorConfiguration MergeConfiguration(
+    /// <summary>
+    /// Creates or merges the configuration singleton. <paramref name="generated"/> is the
+    /// source-generated dispatch table for <c>AddSimpleMediatorGenerated</c>, or <c>null</c> for the
+    /// reflection-based <c>AddSimpleMediator</c>, which also enables reflection dispatch.
+    /// </summary>
+    internal static MediatorConfiguration MergeConfiguration(
         IServiceCollection services,
         SimpleMediatorOptions options,
-        List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers)
+        List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers,
+        GeneratedMediatorRegistry? generated)
     {
+        var reflectionDispatch = generated is null;
+
         var existingDescriptor = services.FirstOrDefault(descriptor => descriptor.ServiceType == typeof(MediatorConfiguration));
 
         if (existingDescriptor?.ImplementationInstance is MediatorConfiguration existing)
@@ -229,7 +246,10 @@ public static class ServiceCollectionExtensions
                 capacity,
                 validationRequested,
                 requireScopedMediator,
-                existing.RequireScopedMediatorIsExplicit || options.HasCustomRequireScopedMediator);
+                existing.RequireScopedMediatorIsExplicit || options.HasCustomRequireScopedMediator,
+                Merge(existing.GeneratedRequestWrappers, generated?.RequestWrappers),
+                Merge(existing.GeneratedNotificationWrappers, generated?.NotificationWrappers),
+                existing.AllowsReflectionDispatch || reflectionDispatch);
 
             services.Remove(existingDescriptor);
             services.AddSingleton(configuration);
@@ -242,8 +262,40 @@ public static class ServiceCollectionExtensions
             options.OpenGenericResolutionCacheCapacity,
             options.ValidateOnBuild,
             options.RequireScopedMediator,
-            options.HasCustomRequireScopedMediator);
+            options.HasCustomRequireScopedMediator,
+            generated?.RequestWrappers,
+            generated?.NotificationWrappers,
+            reflectionDispatch);
         services.AddSingleton(initialConfiguration);
         return initialConfiguration;
+    }
+
+    private static IReadOnlyDictionary<TKey, object>? Merge<TKey>(
+        IReadOnlyDictionary<TKey, object>? existing,
+        IReadOnlyDictionary<TKey, object>? added)
+        where TKey : notnull
+    {
+        if (existing is null || existing.Count == 0)
+        {
+            return added;
+        }
+
+        if (added is null || added.Count == 0)
+        {
+            return existing;
+        }
+
+        var merged = new Dictionary<TKey, object>();
+        foreach (var entry in existing)
+        {
+            merged[entry.Key] = entry.Value;
+        }
+
+        foreach (var entry in added)
+        {
+            merged[entry.Key] = entry.Value;
+        }
+
+        return merged;
     }
 }

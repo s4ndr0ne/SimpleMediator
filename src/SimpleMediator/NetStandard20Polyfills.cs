@@ -67,6 +67,36 @@ namespace System.Diagnostics.CodeAnalysis
         public string? Url { get; set; }
     }
 
+    [AttributeUsage(AttributeTargets.All, Inherited = false, AllowMultiple = true)]
+    internal sealed class UnconditionalSuppressMessageAttribute : Attribute
+    {
+        public UnconditionalSuppressMessageAttribute(string category, string checkId)
+        {
+            Category = category;
+            CheckId = checkId;
+        }
+
+        public string Category { get; }
+
+        public string CheckId { get; }
+
+        public string? Justification { get; set; }
+    }
+
+    [AttributeUsage(AttributeTargets.Constructor | AttributeTargets.Field | AttributeTargets.Method, AllowMultiple = true, Inherited = false)]
+    internal sealed class DynamicDependencyAttribute : Attribute
+    {
+        public DynamicDependencyAttribute(DynamicallyAccessedMemberTypes memberTypes, Type type)
+        {
+            MemberTypes = memberTypes;
+            Type = type;
+        }
+
+        public DynamicallyAccessedMemberTypes MemberTypes { get; }
+
+        public Type? Type { get; }
+    }
+
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Constructor | AttributeTargets.Method | AttributeTargets.Property, Inherited = false, AllowMultiple = false)]
     internal sealed class RequiresDynamicCodeAttribute : Attribute
     {

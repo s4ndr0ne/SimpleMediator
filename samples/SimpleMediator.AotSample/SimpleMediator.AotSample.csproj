@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Native AOT smoke test. It compiles the console sample's sources unchanged and publishes them
-    with PublishAot, so the whole SimpleMediator surface (assembly scanning, open generics closed
-    over value types, pipeline behaviors, notifications, exception handlers) is exercised by the
-    ILC compiler and executed as a native binary in CI.
+    Native AOT smoke test. It compiles the console sample's handlers unchanged, registers them with
+    the source generator (AddSimpleMediatorGenerated) and publishes with PublishAot, so request,
+    void, value-type, open-generic, pipeline, notification and exception-handler dispatch is compiled
+    by ILC and executed as a self-checking native binary in CI.
 
     PublishAot must live here rather than on the command line: a global property would flow into
     the library's netstandard2.0 build, which does not support AOT (NETSDK1207).
@@ -15,32 +15,22 @@
     <TargetFrameworks></TargetFrameworks>
     <TargetFramework>net10.0</TargetFramework>
     <PublishAot>true</PublishAot>
-    <!--
-      The consumer-side IL2026/IL3050 at AddSimpleMediator/Send/Publish are expected until the source
-      generator ships. Keep them out of the solution build; ILC still reports every warning at
-      publish time, where the CI aot-smoke job inspects them.
-    -->
-    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
-    <EnableAotAnalyzer>false</EnableAotAnalyzer>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <RootNamespace>SimpleMediator.ConsoleSample</RootNamespace>
+    <!-- Any trim/AOT warning fails the build: the generated path must be warning-free. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>SimpleMediator.AotSample</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\SimpleMediator.Console\*.cs" LinkBase="ConsoleSample" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!--
-      Reflection-based assembly scanning cannot see types the trimmer removed, and handlers are
-      only referenced through scanning. Rooting the application assembly keeps them.
-      TODO: remove once the source generator emits explicit registrations.
-    -->
-    <TrimmerRootAssembly Include="$(AssemblyName)" />
+    <Compile Include="..\SimpleMediator.Console\*.cs" Exclude="..\SimpleMediator.Console\Program.cs" LinkBase="ConsoleSample" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SimpleMediator\SimpleMediator.csproj" />
+    <!-- In-repo equivalent of a PackageReference to s4ndr0ne.SimpleMediator.SourceGenerator. -->
+    <ProjectReference Include="..\..\src\SimpleMediator.SourceGenerator\SimpleMediator.SourceGenerator.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

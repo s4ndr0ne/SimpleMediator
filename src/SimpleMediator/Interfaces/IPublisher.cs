@@ -1,5 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
-
 namespace SimpleMediator.Interfaces;
 
 /// <summary>
@@ -19,7 +17,5 @@ public interface IPublisher
     /// <param name="notification">The notification to publish.</param>
     /// <param name="cancellationToken">An optional cancellation token.</param>
     /// <returns>A task representing the asynchronous operation.</returns>
-    [RequiresUnreferencedCode("SimpleMediator creates notification wrappers through reflection.")]
-    [RequiresDynamicCode("SimpleMediator constructs generic notification wrapper types at runtime.")]
     Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification;
 }

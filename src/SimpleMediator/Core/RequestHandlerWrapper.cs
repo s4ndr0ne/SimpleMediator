@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
 
@@ -6,16 +5,12 @@ namespace SimpleMediator.Core;
 
 internal abstract class RequestHandlerWrapper<TResponse>
 {
-    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
-    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public abstract Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken);
 }
 
 internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrapper<TResponse>
     where TRequest : IRequest<TResponse>
 {
-    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
-    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public override async Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
         var typedRequest = (TRequest)request;

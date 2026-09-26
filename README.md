@@ -1,7 +1,7 @@
 # SimpleMediator
 A lightweight implementation of the mediator pattern for .NET, built on Microsoft.Extensions.DependencyInjection.
 
-SimpleMediator focuses on predictable behaviour rather than raw speed: correct DI scope handling, explicit failure contracts, and fail-fast validation. Dispatch overhead is small but it is a reflection-plus-DI design, not a source-generated one; see [What the performance actually consists of](#what-the-performance-actually-consists-of).
+SimpleMediator focuses on predictable behaviour rather than raw speed: correct DI scope handling, explicit failure contracts, and fail-fast validation. Dispatch overhead is small; handlers and pipeline services are resolved through DI on every call, see [What the performance actually consists of](#what-the-performance-actually-consists-of). An optional source generator makes the composition root reflection-free for trimming and Native AOT, see [AOT & Trimming](#aot--trimming).
 
 [![.NET](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml/badge.svg)](https://github.com/s4ndr0ne/SimpleMediator/actions/workflows/dotnet.yml)
 [![GitHub](https://img.shields.io/badge/GitHub-s4ndr0ne%2FSimpleMediator-181717?logo=github)](https://github.com/s4ndr0ne/SimpleMediator)
@@ -18,6 +18,7 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 - **✂️ Segregated interfaces**: depend on `ISender` (requests) or `IPublisher` (notifications) instead of the full `IMediator`.
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
+- **✂️ Native AOT ready**: the optional `s4ndr0ne.SimpleMediator.SourceGenerator` package discovers handlers at compile time and emits `AddSimpleMediatorGenerated`, a drop-in replacement for `AddSimpleMediator` with no trim/AOT warnings. See [AOT & Trimming](#aot--trimming).
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
 - **🎯 Target frameworks**: `net8.0`, `net10.0` and `netstandard2.0` (for legacy consumers such as .NET Framework 4.7.2+; on netstandard2.0, `IAsyncDisposable` and `ValueTask` come from `Microsoft.Bcl.AsyncInterfaces`, and implementers of `IOrderedPipelineBehavior` / `IRequestExceptionHandler<,>` must declare `Order` explicitly because default interface members are not supported).
 
@@ -25,6 +26,11 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 This library is intended to be used as a NuGet package. To install it, use the .NET CLI:
 ```bash
 dotnet add package s4ndr0ne.SimpleMediator
+```
+
+For trimming or Native AOT, install the source generator instead (it depends on the runtime package) and use `AddSimpleMediatorGenerated`; see [AOT & Trimming](#aot--trimming):
+```bash
+dotnet add package s4ndr0ne.SimpleMediator.SourceGenerator
 ```
 
 ## Supported DI container
@@ -191,10 +197,9 @@ public class PingRequestHandler : IRequestHandler<PingRequest, string>
 var response = await mediator.Send(new PingRequest("Hello"));
 ```
 
-> **AOT/trimming:** the public `ISender`/`IPublisher` (and therefore `IMediator`) and `Mediator` dispatch methods are annotated because
-> wrapper creation uses reflection and runtime code generation. SimpleMediator currently targets
-> JIT hosts; Native AOT and trimming are not supported without an application-specific verification
-> strategy. See [AOT & Trimming](#aot--trimming) for what this means for a trimming-enabled build.
+> **AOT/trimming:** `AddSimpleMediator` scans assemblies and creates dispatch wrappers through
+> reflection, so it is annotated as trim/AOT-unsafe. For trimmed or Native AOT applications use the
+> source-generated `AddSimpleMediatorGenerated` instead; see [AOT & Trimming](#aot--trimming).
 
 > **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
 
@@ -524,33 +529,71 @@ dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks 
 The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. Both the mediator and the baseline handler are resolved from a scope, and the baseline handler is `async`, so the comparison isolates mediator dispatch overhead instead of measuring a completed task against a state machine. `MediatorSend_WithBehaviors` measures the cost of a three-behavior chain. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
-Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The implementation relies on assembly scanning, runtime `MakeGenericType`, `Activator.CreateInstance`, and `ActivatorUtilities`, and the supported deployment target is classic JIT execution such as standard ASP.NET Core.
 
-`AddSimpleMediator`, `ISender`, `IPublisher`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
+SimpleMediator has two composition roots with identical configuration and runtime behavior:
 
-The library itself is built with `IsAotCompatible` on `net8.0`/`net10.0`, so every reflection path inside it is annotated and verified by the trim/AOT analyzers: warnings surface only at your call sites, never from inside the package. CI publishes [`samples/SimpleMediator.AotSample`](samples/SimpleMediator.AotSample) with Native AOT to keep it that way. Measured behavior of that native binary today:
+| | `AddSimpleMediator` (reflection) | `AddSimpleMediatorGenerated` (source generator) |
+|---|---|---|
+| Handler discovery | Assembly scanning at startup | At compile time |
+| Dispatch wrappers | `MakeGenericType` on first use | Pre-generated, closed types |
+| Open generics (handlers, behaviors) | Closed at runtime by DI / SimpleMediator | Closed at compile time for every request/notification the generator sees |
+| Trimming / Native AOT | Not supported (`IL2026`/`IL3050` at `AddSimpleMediator`) | **Supported**: no trim/AOT warning, verified by a Native AOT binary in CI |
 
-| Scenario | Native AOT |
-|---|---|
-| Handlers discovered only through `RegisterAssembly` | Trimmed away unless the assembly is rooted (`<TrimmerRootAssembly Include="..." />`) |
-| Requests with reference-type responses (`IRequest<string>`, `IRequest<MyDto>`), pipeline behaviors | Work (with the assembly rooted) |
-| Void requests (`IRequest` → `Unit`) and value-type responses (`IRequest<int>`) | Fail at runtime (`NotSupportedException`: missing native code for the generic wrapper) |
+### Native AOT with the source generator
 
-Full support requires compile-time generated registrations and dispatch; until then the annotations stay on the dispatch APIs on purpose.
+Install the generator package (it brings `s4ndr0ne.SimpleMediator` with it) and change one word in the composition root:
 
-> **Consumer builds with trimming or AOT.** Those annotations mean a project with `PublishTrimmed`
-> or `PublishAot` **and** `TreatWarningsAsErrors` fails to compile on `AddSimpleMediator` and on
-> every `Send`/`Publish` call site, with `IL2026` and `IL3050`. If you are knowingly running
-> trimming/AOT and accept that handler types are not trim-safe, suppress them per project:
->
-> ```xml
-> <PropertyGroup>
->   <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
-> </PropertyGroup>
-> ```
->
-> Suppressing the warning does not make trimming work: handlers reachable only through reflection
-> can still be trimmed away. Verify with an actual trimmed publish before relying on it.
+```bash
+dotnet add package s4ndr0ne.SimpleMediator.SourceGenerator
+```
+
+```csharp
+services.AddSimpleMediatorGenerated(options =>   // was: AddSimpleMediator
+{
+    options.RegisterAssembly(typeof(Program).Assembly);
+    options.AddBehavior(typeof(LoggingBehavior<,>));
+});
+```
+
+Everything else — `DefaultLifetime`, `NotificationPublishStrategy`, `ValidateOnBuild`, assembly filters, behavior ordering, scopes, `ISender`/`IPublisher`/`IMediator` — works unchanged. The generator emits an `internal` `AddSimpleMediatorGenerated` into the project that references it, so reference the generator from the project that composes the container.
+
+What the generator sees, and therefore what works under AOT:
+
+- **Assemblies**: the current project, plus every assembly passed to `RegisterAssembly` as `typeof(T).Assembly`, `typeof(T).GetTypeInfo().Assembly` or `Assembly.GetExecutingAssembly()`. At runtime, handlers are registered only for assemblies passed to `RegisterAssembly`, in that order, and assembly filters receive the declared type (for an open-generic handler, its generic definition), exactly like scanning. Passing an assembly the generator could not scan throws at startup.
+- **Requests and notifications**: every concrete message type in a scanned assembly, every message named by a closed handler, and the argument type of every `Send`/`Publish` call in the project. Generic messages such as `Echo<int>` are known from the `Send(new Echo<int>(...))` call site.
+- **Open-generic handlers and behaviors** are closed for each known message that satisfies their constraints. Behaviors remain opt-in: only those passed to `AddBehavior` are registered.
+
+Limitations of generated mode:
+
+- A request or notification type that only exists at runtime (for example `Send(new Echo<T>(value))` inside a generic method) has no generated wrapper. Generated mode never falls back to reflection: the call fails with an exception that names the missing type (`RequestHandlerResolutionException` for requests, `InvalidOperationException` for notifications). Send the closed type somewhere the generator can see it.
+- Handlers must be accessible from the composing project: `public`, or `internal` in the same project. Private nested handlers are skipped with a warning; internal types of referenced assemblies are invisible to the generator.
+- Open-generic request handlers that SimpleMediator closes itself in reflection mode (for example `EchoHandler<T> : IRequestHandler<Echo<T>, T>`) become ordinary closed DI registrations, so their lifetime is owned by Microsoft DI.
+- `new Mediator(serviceProvider)` takes its dispatch strategy from the container it is given, so it is AOT-safe on a container composed with `AddSimpleMediatorGenerated`. To register handlers by hand in an AOT application, call `services.AddSimpleMediatorGenerated()` without options: it registers the generated dispatch table and no handler. A provider with no SimpleMediator registration at all can only use reflection; under Native AOT the `Mediator` constructor rejects it with an `InvalidOperationException` that explains the fix, instead of failing later on the first value-type request.
+- Requires Roslyn 4.8 or later (.NET 8 SDK, Visual Studio 17.8). Generated code is C# 7.3 compatible.
+
+Generator diagnostics (reported only in projects that call `AddSimpleMediatorGenerated`):
+
+| ID | Severity | Meaning |
+|---|---|---|
+| `SMG000` | Warning | The generator failed; no registrations were emitted |
+| `SMG001` | Warning | More than one handler for the same request (fine only if an assembly filter excludes all but one) |
+| `SMG002` | Warning | A handler, behavior or message is not accessible from generated code and was skipped |
+| `SMG003` | Warning | A `Send`/`Publish` argument type contains type parameters, so it cannot be pre-generated |
+| `SMG004` | Info | An open-generic handler or behavior matched no known message |
+| `SMG005` | Warning | `AddBehavior` was not called with a `typeof(...)` expression |
+| `SMG006` | Warning | The `RegisterAssembly` argument cannot be resolved at compile time |
+
+[`samples/SimpleMediator.AotSample`](samples/SimpleMediator.AotSample) is published with Native AOT in CI; the publish must produce no trim/AOT warning and the self-checking native binary must pass request/response, void (`Unit`), value-type and open-generic dispatch, behaviors, pre/post handlers, notifications and exception handlers.
+
+### Reflection mode and trimming
+
+`AddSimpleMediator` and `ValidateSimpleMediator` are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]`: scanning, runtime generic instantiation and `ActivatorUtilities` cannot be made trim-safe. The dispatch APIs (`ISender`, `IPublisher`, `Mediator`) carry no annotation, because whether they are safe depends only on how the container was composed. The library itself is built with `IsAotCompatible` on `net8.0`/`net10.0`, so these are the only places trim/AOT warnings can surface.
+
+> **Consumer builds with trimming or AOT.** A project with `PublishTrimmed` or `PublishAot` and
+> `TreatWarningsAsErrors` fails to compile on `AddSimpleMediator` with `IL2026` and `IL3050`.
+> Use `AddSimpleMediatorGenerated` instead. Suppressing the warnings does not make reflection mode
+> work: handlers reachable only through scanning are trimmed away, and void or value-type
+> responses fail at runtime under Native AOT.
 
 The package does not inject transitive global usings into consumer projects. Add `using SimpleMediator.Interfaces;` explicitly, or enable the namespace in the consuming project if desired.
 
@@ -579,7 +622,7 @@ The wrapper caches are **unbounded**: one small wrapper per request/response pai
 
 ## Known limitations
 
-- No Native AOT or trimming support (see above).
+- Native AOT and trimming require the source generator (`AddSimpleMediatorGenerated`); reflection-based `AddSimpleMediator` does not support them. See [AOT & Trimming](#aot--trimming) for the generated mode's own limits.
 - No `IStreamRequest` / `IAsyncEnumerable` request support.
 - No `IPipelineContext` equivalent, so there is no way to pass per-request services or arguments alongside a request; everything flows through the ambient `IServiceProvider` of the mediator's scope.
 - No handler decoration: one handler per request and no built-in decorator chain. Use `IPipelineBehavior<,>` for cross-cutting concerns.

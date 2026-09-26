@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Roslyn loads analyzers and generators as netstandard2.0 in every host (VS, dotnet build, Rider). -->
+    <TargetFrameworks></TargetFrameworks>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+
+    <PackageId>s4ndr0ne.SimpleMediator.SourceGenerator</PackageId>
+    <Description>Compile-time registration for SimpleMediator: discovers handlers and behaviors at build time and emits AddSimpleMediatorGenerated, a reflection-free composition root compatible with trimming and Native AOT.</Description>
+    <PackageTags>mediator, source-generator, aot, trimming, net8, net10</PackageTags>
+
+    <!-- The generator assembly ships under analyzers/, never as a lib/ reference. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- NU5128: no lib/ folder is intentional for an analyzer-only package. -->
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+    <!-- Transitive pinning would promote the library's own dependencies to direct dependencies of
+         this package; the only dependency must be s4ndr0ne.SimpleMediator itself. -->
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Roslyn version compiled against is the minimum host that can load the generator:
+         4.8 = .NET 8 SDK / Visual Studio 17.8. Raising it drops older hosts, so it is pinned here
+         rather than following the central (test/tooling) version. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="4.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The generator never uses the library's types (it resolves them by name from the consumer's
+         compilation), so no assembly reference is emitted into the generator. The reference exists
+         to make the runtime package a same-version NuGet dependency: installing the generator brings
+         in the library its generated code calls. ReferenceOutputAssembly="false" would drop it. -->
+    <ProjectReference Include="..\SimpleMediator\SimpleMediator.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="SimpleMediator.SourceGenerator.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)../../README.md" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)../../CHANGELOG.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>

@@ -8,10 +8,6 @@ namespace SimpleMediator.Core;
 
 internal static class RequestHandlerResolver
 {
-    // Every dispatch consults the custom open-generic resolution plan, which closes generic
-    // types at runtime, so resolution carries the same trimming/AOT requirements as Send.
-    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
-    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(IServiceProvider serviceProvider)
         where TRequest : IRequest<TResponse>
     {
@@ -33,8 +29,9 @@ internal static class RequestHandlerResolver
         }
 
         var configuration = serviceProvider.GetService<MediatorConfiguration>();
-        var openMatches = configuration?.ResolveOpenGeneric(typeof(TRequest), typeof(TResponse)).Factories
-                          ?? Array.Empty<OpenGenericHandlerFactory>();
+        var openMatches = configuration is { CustomOpenGenericRequestHandlers.Count: > 0 }
+            ? ResolveCustomOpenGeneric(configuration, typeof(TRequest), typeof(TResponse))
+            : Array.Empty<OpenGenericHandlerFactory>();
 
         var total = closedHandlerCount + openMatches.Count;
 
@@ -94,6 +91,18 @@ internal static class RequestHandlerResolver
             (IRequestHandler<TRequest, TResponse>)openGenericHandler,
             ownedInstance);
     }
+
+    // Custom-mapped open-generic handlers are only ever recorded by assembly scanning in the
+    // reflection-based AddSimpleMediator, whose [RequiresUnreferencedCode]/[RequiresDynamicCode]
+    // already warned the application at the composition root. Source-generated registrations close
+    // those handlers at compile time and never populate the list.
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = ReflectionWrapperFactory.Justification)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = ReflectionWrapperFactory.Justification)]
+    private static IReadOnlyList<OpenGenericHandlerFactory> ResolveCustomOpenGeneric(
+        MediatorConfiguration configuration,
+        Type requestType,
+        Type responseType)
+        => configuration.ResolveOpenGeneric(requestType, responseType).Factories;
 
     internal readonly struct HandlerLease<TRequest, TResponse>
         where TRequest : IRequest<TResponse>

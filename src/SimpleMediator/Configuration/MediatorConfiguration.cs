@@ -44,13 +44,37 @@ internal sealed class MediatorConfiguration
     internal readonly WrapperCache<(Type Request, Type Response)> RequestHandlerWrappers = new();
     internal readonly WrapperCache<Type> NotificationHandlerWrappers = new();
 
+    /// <summary>
+    /// Dispatch wrappers emitted by the source generator, keyed by (request, response) type.
+    /// <c>null</c> when only the reflection-based registration was used.
+    /// </summary>
+    public IReadOnlyDictionary<(Type Request, Type Response), object>? GeneratedRequestWrappers { get; }
+
+    /// <summary>Source-generated notification wrappers, keyed by the concrete notification type.</summary>
+    public IReadOnlyDictionary<Type, object>? GeneratedNotificationWrappers { get; }
+
+    /// <summary>
+    /// Whether dispatch may fall back to building wrappers through reflection. <c>true</c> as soon as
+    /// the reflection-based <c>AddSimpleMediator</c> contributed to the configuration; <c>false</c>
+    /// for a purely source-generated (trim/AOT-safe) configuration, where an unknown request type is a
+    /// configuration error rather than a silent reflection path.
+    /// </summary>
+    public bool AllowsReflectionDispatch { get; }
+
+    internal Func<(Type Request, Type Response), object> RequestWrapperFactory { get; }
+
+    internal Func<Type, object> NotificationWrapperFactory { get; }
+
     public MediatorConfiguration(
         NotificationPublishStrategy notificationPublishStrategy,
         IReadOnlyList<OpenGenericHandlerRegistration>? customOpenGenericRequestHandlers = null,
         int resolutionCacheCapacity = 1024,
         bool validationRequested = false,
         bool requireScopedMediator = true,
-        bool requireScopedMediatorIsExplicit = false)
+        bool requireScopedMediatorIsExplicit = false,
+        IReadOnlyDictionary<(Type Request, Type Response), object>? generatedRequestWrappers = null,
+        IReadOnlyDictionary<Type, object>? generatedNotificationWrappers = null,
+        bool allowsReflectionDispatch = true)
     {
         ThrowHelper.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
@@ -60,6 +84,50 @@ internal sealed class MediatorConfiguration
         RequireScopedMediatorIsExplicit = requireScopedMediatorIsExplicit;
         CustomOpenGenericRequestHandlers = customOpenGenericRequestHandlers ?? NoRegistrations;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
+        GeneratedRequestWrappers = generatedRequestWrappers;
+        GeneratedNotificationWrappers = generatedNotificationWrappers;
+        AllowsReflectionDispatch = allowsReflectionDispatch;
+        RequestWrapperFactory = CreateRequestWrapper;
+        NotificationWrapperFactory = CreateNotificationWrapper;
+    }
+
+    private object CreateRequestWrapper((Type Request, Type Response) key)
+    {
+        if (GeneratedRequestWrappers is not null && GeneratedRequestWrappers.TryGetValue(key, out var wrapper))
+        {
+            return wrapper;
+        }
+
+        if (!AllowsReflectionDispatch)
+        {
+            throw new RequestHandlerResolutionException(
+                $"No source-generated dispatch exists for request '{key.Request.FullName}' with response '{key.Response.FullName}'. " +
+                "The SimpleMediator source generator registers every concrete request type declared in, handled in, or sent from " +
+                "the project that calls AddSimpleMediatorGenerated; a request type that only exists at runtime (created through " +
+                "reflection, or sent through a generic type parameter) cannot be discovered. Declare or send the closed request " +
+                "type in that project, or use the reflection-based AddSimpleMediator.");
+        }
+
+        return ReflectionWrapperFactory.Request(key);
+    }
+
+    private object CreateNotificationWrapper(Type notificationType)
+    {
+        if (GeneratedNotificationWrappers is not null && GeneratedNotificationWrappers.TryGetValue(notificationType, out var wrapper))
+        {
+            return wrapper;
+        }
+
+        if (!AllowsReflectionDispatch)
+        {
+            throw new InvalidOperationException(
+                $"No source-generated dispatch exists for notification '{notificationType.FullName}'. The SimpleMediator " +
+                "source generator registers every concrete notification type declared in, handled in, or published from the " +
+                "project that calls AddSimpleMediatorGenerated. Declare or publish the closed notification type in that " +
+                "project, or use the reflection-based AddSimpleMediator.");
+        }
+
+        return ReflectionWrapperFactory.Notification(notificationType);
     }
 
     internal void RequestValidation() => ValidationRequested = true;

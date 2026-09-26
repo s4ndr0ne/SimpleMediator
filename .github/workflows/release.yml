@@ -7,8 +7,9 @@ on:
       - 'v*'
 
 env:
-  PROJECT_PATH: src/SimpleMediator/SimpleMediator.csproj
-  TEST_PROJECT_PATH: SimpleMediator.sln
+  # Packing the solution packs every IsPackable project: s4ndr0ne.SimpleMediator and
+  # s4ndr0ne.SimpleMediator.SourceGenerator, always released together with the same version.
+  SOLUTION_PATH: SimpleMediator.sln
   
 jobs:
   release:
@@ -48,19 +49,27 @@ jobs:
         run: dotnet build --configuration Release --no-restore -p:Version=${{ steps.version.outputs.package_version }}
       
       - name: Test
-        run: dotnet test ${{ env.TEST_PROJECT_PATH }} -c Release --no-build --verbosity normal
+        run: dotnet test ${{ env.SOLUTION_PATH }} -c Release --no-build --verbosity normal
 
       - name: Pack
-        run: dotnet pack ${{ env.PROJECT_PATH }} --configuration Release --no-build -p:Version=${{ steps.version.outputs.package_version }} -p:PackageVersion=${{ steps.version.outputs.package_version }} -o ./artifacts
+        run: dotnet pack ${{ env.SOLUTION_PATH }} --configuration Release --no-build -p:Version=${{ steps.version.outputs.package_version }} -p:PackageVersion=${{ steps.version.outputs.package_version }} -o ./artifacts
 
       - name: Verify package version
         shell: bash
         run: |
-          package_version=$(unzip -p ./artifacts/*.nupkg '*.nuspec' | awk -F'[<>]' '/<version>/{print $3; exit}')
-          if [[ "$package_version" != "${{ steps.version.outputs.package_version }}" ]]; then
-            echo "Expected package version ${{ steps.version.outputs.package_version }}, found $package_version."
-            exit 1
-          fi
+          expected="${{ steps.version.outputs.package_version }}"
+          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator; do
+            file="./artifacts/$package.$expected.nupkg"
+            if [[ ! -f "$file" ]]; then
+              echo "Missing package $file."
+              exit 1
+            fi
+            package_version=$(unzip -p "$file" '*.nuspec' | awk -F'[<>]' '/<version>/{print $3; exit}')
+            if [[ "$package_version" != "$expected" ]]; then
+              echo "Expected $package version $expected, found $package_version."
+              exit 1
+            fi
+          done
 
       - name: Verify package consumer
         run: bash eng/verify-package.sh ./artifacts ${{ steps.version.outputs.package_version }}

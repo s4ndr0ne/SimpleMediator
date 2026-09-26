@@ -9,10 +9,11 @@ install the .NET 8 runtime.
 ## Layout
 
 ```
-src/SimpleMediator/            the library (the only packable project)
-tests/SimpleMediator.*Tests/   unit, safety and integration tests (xunit)
-samples/SimpleMediator.Console/ console demo
-samples/SimpleMediator.AotSample/ Native AOT smoke test (same sources, PublishAot; CI aot-smoke)
+src/SimpleMediator/                 the runtime library (package s4ndr0ne.SimpleMediator)
+src/SimpleMediator.SourceGenerator/ Roslyn source generator for AOT (package s4ndr0ne.SimpleMediator.SourceGenerator)
+tests/SimpleMediator.*Tests/        unit, safety, integration and generator tests (xunit)
+samples/SimpleMediator.Console/     console demo
+samples/SimpleMediator.AotSample/   Native AOT smoke test (Console sources + AddSimpleMediatorGenerated; CI aot-smoke)
 benchmarks/                    BenchmarkDotNet suite
 eng/verify-package.sh          package consumer smoke test (used by CI)
 ```
@@ -39,6 +40,11 @@ dotnet test -c Release         # runs on net8.0 and net10.0
 - netstandard2.0 is a supported target: no default interface members, no framework
   `ThrowIf*` guards (use the internal `ThrowHelper`), no `DistinctBy`. If an API is
   missing there, prefer a single conditional block over divergent code paths.
+- The source generator targets netstandard2.0 and compiles against Roslyn 4.8
+  (`VersionOverride` in its csproj): do not raise that without documenting the new minimum
+  SDK/Visual Studio. Generated code must stay C# 7.3 compatible. New diagnostics go in
+  `AnalyzerReleases.Unshipped.md`. Registration semantics must match assembly scanning;
+  `SimpleMediator.SourceGenerator.Tests` compares both modes on the same fixtures.
 - Behavior contracts (scope guard, FIFO behavior ordering, exception routing, lifetime
   rules) are pinned by `SimpleMediator.SafetyTests`. A change that alters them is
   breaking, even if the API surface is unchanged.
@@ -53,4 +59,5 @@ are accepted only on a major release and must be marked BREAKING.
 
 Releases are maintainer-only: tag `vX.Y.Z` and push; the release workflow validates the
 semver tag, builds, tests, packs, smoke-tests the package and creates the GitHub release
-with the nupkg/snupkg attached. The project follows [Semantic Versioning](https://semver.org).
+with both packages (runtime nupkg/snupkg and generator nupkg) attached. Both packages always
+ship with the same version. The project follows [Semantic Versioning](https://semver.org).
