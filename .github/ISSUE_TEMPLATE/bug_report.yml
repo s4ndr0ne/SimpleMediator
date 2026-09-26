@@ -1,0 +1,43 @@
+name: Bug report
+description: Report incorrect behavior of the library
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the incorrect behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Minimal code that reproduces the problem (registrations, handler, and the Send/Publish call).
+      render: csharp
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      placeholder: e.g. 4.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Target framework
+      options:
+        - net8.0
+        - net10.0
+        - netstandard2.0
+        - multiple
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Exception and stack trace
+      description: Full exception text, if any. MediatorScopeException and RequestHandlerResolutionException messages are designed to be actionable — paste them verbatim.
+      render: text

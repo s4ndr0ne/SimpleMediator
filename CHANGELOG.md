@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - SDK pinning via `global.json` (10.0.400, `latestFeature` roll-forward), honored by CI.
 - Central package versioning via `Directory.Packages.props` with transitive pinning.
 - Dependabot for NuGet and GitHub Actions, weekly, with grouped updates (test stack, Microsoft.Extensions, analyzers/packaging, benchmarks).
+- `NuGet.config` locked to nuget.org with package source mapping, so machine-level private feeds cannot enter resolution (dependency-confusion protection).
+- Repository governance: `CODEOWNERS`, pull request template, bug/feature issue forms, `SECURITY.md` (private vulnerability reporting, supported versions) and `CONTRIBUTING.md` (layout, build/test commands, conventions, release process).
 
 ### Changed
 - Repository layout: library-only `src/`; tests moved to `tests/` (`SimpleMediator.Tests`, `SimpleMediator.IntegrationTests`, `SimpleMediator.SafetyTests`), the console demo to `samples/SimpleMediator.Console`, and the benchmarks project added to the solution. Solution folders now mirror the directory layout.

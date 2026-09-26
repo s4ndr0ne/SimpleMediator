@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose a new capability or a change to an existing contract
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the scenario, not just the API you have in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Shape of the API or behavior change. Note whether it is additive or breaking.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today, or reasons existing features (behaviors, pre/post handlers, exception handlers) do not cover the case.
