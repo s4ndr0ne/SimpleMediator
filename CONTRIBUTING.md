@@ -64,7 +64,8 @@ published. On release day, move them under `## [4.1.0] - YYYY-MM-DD`, leave a fr
 section above, then create and push the `v4.1.0` tag.
 
 The release workflow validates the semver tag, builds, tests, packs, smoke-tests and creates the
-GitHub release with both packages attached (runtime nupkg/snupkg and generator nupkg). Both
-packages always ship with the same version. The workflow does **not** publish packages to NuGet;
+GitHub release with both packages and their symbols attached (runtime and generator
+nupkg/snupkg pairs). Both packages always ship with the same version. The workflow does **not**
+publish packages to NuGet;
 publishing them there remains a separate maintainer action. The project follows
 [Semantic Versioning](https://semver.org).

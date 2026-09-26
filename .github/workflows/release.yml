@@ -7,8 +7,8 @@ on:
       - 'v*'
 
 env:
-  # Packing the solution packs every IsPackable project: s4ndr0ne.SimpleMediator and
-  # s4ndr0ne.SimpleMediator.SourceGenerator, always released together with the same version.
+  # Packing the solution creates both runtime and source-generator packages, with matching
+  # symbol packages, all released together at the same version.
   SOLUTION_PATH: SimpleMediator.sln
   
 jobs:
@@ -67,6 +67,17 @@ jobs:
             package_version=$(unzip -p "$file" '*.nuspec' | awk -F'[<>]' '/<version>/{print $3; exit}')
             if [[ "$package_version" != "$expected" ]]; then
               echo "Expected $package version $expected, found $package_version."
+              exit 1
+            fi
+          done
+          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator; do
+            file="./artifacts/$package.$expected.snupkg"
+            if [[ ! -f "$file" ]]; then
+              echo "Missing symbols package $file."
+              exit 1
+            fi
+            if ! unzip -Z1 "$file" | grep -qE '\.pdb$'; then
+              echo "Symbols package $file does not contain a PDB file."
               exit 1
             fi
           done

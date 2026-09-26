@@ -13,6 +13,8 @@
 
     <!-- The generator assembly ships under analyzers/, never as a lib/ reference. -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!-- NU5128: no lib/ folder is intentional for an analyzer-only package. -->
     <NoWarn>$(NoWarn);NU5128</NoWarn>
     <!-- Transitive pinning would promote the library's own dependencies to direct dependencies of
@@ -48,6 +50,7 @@
 
   <ItemGroup>
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+    <None Include="$(OutputPath)\$(AssemblyName).pdb" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)../../LICENSE" Pack="true" PackagePath="" />
     <None Include="$(MSBuildThisFileDirectory)../../README.md" Pack="true" PackagePath="" />
     <None Include="$(MSBuildThisFileDirectory)../../CHANGELOG.md" Pack="true" PackagePath="" />
