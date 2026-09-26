@@ -95,6 +95,7 @@ public static class ServiceCollectionExtensions
     /// validate request types without a closed handler registration. Returns the same
     /// collection for chaining.
     /// </summary>
+    [RequiresUnreferencedCode(ReflectionMessage)]
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection ValidateSimpleMediator(this IServiceCollection services)
     {
@@ -109,6 +110,7 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    [RequiresUnreferencedCode(ReflectionMessage)]
     private static void RegisterBehaviors(IServiceCollection services, SimpleMediatorOptions options)
     {
         // Order determines the primary execution sequence. Behaviors with equal Order run
@@ -134,6 +136,7 @@ public static class ServiceCollectionExtensions
         }
     }
 
+    [RequiresUnreferencedCode(ReflectionMessage)]
     private static void AddBehavior(IServiceCollection services, Type serviceType, Type behaviorType, ServiceLifetime lifetime)
     {
         // TryAddEnumerable keeps the FIRST registration for a (service type, implementation type)

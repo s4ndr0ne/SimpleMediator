@@ -12,6 +12,7 @@ install the .NET 8 runtime.
 src/SimpleMediator/            the library (the only packable project)
 tests/SimpleMediator.*Tests/   unit, safety and integration tests (xunit)
 samples/SimpleMediator.Console/ console demo
+samples/SimpleMediator.AotSample/ Native AOT smoke test (same sources, PublishAot; CI aot-smoke)
 benchmarks/                    BenchmarkDotNet suite
 eng/verify-package.sh          package consumer smoke test (used by CI)
 ```

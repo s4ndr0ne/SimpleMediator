@@ -23,6 +23,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "samples", "samples", "{5D20
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleMediator.Console", "samples\SimpleMediator.Console\SimpleMediator.Console.csproj", "{9C8B46D4-21B7-4085-9A04-60FEEBFBA68A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleMediator.AotSample", "samples\SimpleMediator.AotSample\SimpleMediator.AotSample.csproj", "{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -105,6 +107,18 @@ Global
 		{9C8B46D4-21B7-4085-9A04-60FEEBFBA68A}.Release|x64.Build.0 = Release|Any CPU
 		{9C8B46D4-21B7-4085-9A04-60FEEBFBA68A}.Release|x86.ActiveCfg = Release|Any CPU
 		{9C8B46D4-21B7-4085-9A04-60FEEBFBA68A}.Release|x86.Build.0 = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|x64.Build.0 = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Debug|x86.Build.0 = Debug|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|x64.ActiveCfg = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|x64.Build.0 = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|x86.ActiveCfg = Release|Any CPU
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -116,5 +130,6 @@ Global
 		{D12FA2A5-CB7E-4869-9EC3-74D466619A3C} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{372D9A31-2237-40EC-AC69-CA74164AA664} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{9C8B46D4-21B7-4085-9A04-60FEEBFBA68A} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
+		{BC163D77-86B9-4237-ACF2-8E1E65CF8D85} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
 	EndGlobalSection
 EndGlobal

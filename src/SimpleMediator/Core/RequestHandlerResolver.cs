@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Configuration;
 using SimpleMediator.Infrastructure;
@@ -7,6 +8,10 @@ namespace SimpleMediator.Core;
 
 internal static class RequestHandlerResolver
 {
+    // Every dispatch consults the custom open-generic resolution plan, which closes generic
+    // types at runtime, so resolution carries the same trimming/AOT requirements as Send.
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(IServiceProvider serviceProvider)
         where TRequest : IRequest<TResponse>
     {

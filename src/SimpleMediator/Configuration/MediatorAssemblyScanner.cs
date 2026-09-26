@@ -96,7 +96,7 @@ internal static class MediatorAssemblyScanner
 
     private static void RegisterOpenGenericType(
         IServiceCollection services,
-        Type type,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type type,
         ServiceLifetime lifetime,
         List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers)
     {
@@ -148,7 +148,7 @@ internal static class MediatorAssemblyScanner
 
     private static void RegisterNativeOpenGenericInterface(
         IServiceCollection services,
-        Type implementationType,
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type implementationType,
         Type implementedInterface,
         Type serviceTypeDefinition,
         ServiceLifetime lifetime)

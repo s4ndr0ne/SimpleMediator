@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Infrastructure;
@@ -25,7 +26,9 @@ internal static class OpenGenericRegistrationRules
            || serviceTypeDefinition == typeof(IRequestExceptionHandler<,>)
            || serviceTypeDefinition == typeof(IPipelineBehavior<,>);
 
-    internal static Type? FindImplementedInterface(Type implementationType, Type serviceTypeDefinition)
+    internal static Type? FindImplementedInterface(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type implementationType,
+        Type serviceTypeDefinition)
         => implementationType
             .GetInterfaces()
             .FirstOrDefault(implementedInterface =>
@@ -61,7 +64,8 @@ internal static class OpenGenericRegistrationRules
     internal static bool MatchesSupportedHandlerInterface(Type genericTypeDefinition)
         => SupportedHandlerInterfaces.Contains(genericTypeDefinition);
 
-    internal static bool ImplementsPipelineBehavior(Type implementationType)
+    internal static bool ImplementsPipelineBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type implementationType)
         => implementationType.GetInterfaces()
             .Any(implementedInterface =>
                 implementedInterface.IsGenericType &&

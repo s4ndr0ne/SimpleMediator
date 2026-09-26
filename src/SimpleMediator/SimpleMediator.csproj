@@ -7,6 +7,12 @@
     <TargetFrameworks>net8.0;net10.0;netstandard2.0</TargetFrameworks>
   </PropertyGroup>
 
+  <!-- Trim/AOT analyzers run on the modern targets; netstandard2.0 does not support them.
+       Every reflection-based code path must be annotated or the build fails (warnings are errors). -->
+  <PropertyGroup Condition="$([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" PrivateAssets="all" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />

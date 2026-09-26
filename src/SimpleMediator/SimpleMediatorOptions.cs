@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Infrastructure;
@@ -150,7 +151,8 @@ public class SimpleMediatorOptions
     /// (lower runs first / outermost); equal values run in registration order (FIFO):
     /// the first registered behavior is outermost and runs first.
     /// </summary>
-    public SimpleMediatorOptions AddBehavior(Type behaviorType)
+    public SimpleMediatorOptions AddBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type behaviorType)
     {
         ThrowHelper.ThrowIfNull(behaviorType);
 

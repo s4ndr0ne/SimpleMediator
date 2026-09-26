@@ -14,6 +14,7 @@ namespace SimpleMediator.Configuration;
 /// </summary>
 internal static class MediatorRegistrationValidator
 {
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     internal static void Validate(IServiceCollection services)
     {
@@ -36,6 +37,7 @@ internal static class MediatorRegistrationValidator
         ValidateNativeOpenGenericHandlers(services, requestHandlerGroups);
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     internal static void ValidateRegistrationShape(IServiceCollection services)
     {
@@ -56,6 +58,7 @@ internal static class MediatorRegistrationValidator
     /// produced it has been disposed. Reject that combination at startup with an actionable message
     /// instead of shipping a handler that holds a disposed <c>DbContext</c>.
     /// </summary>
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     private static void ValidateSingletonCustomOpenGenericHandlers(IServiceCollection services)
     {
         var configuration = GetConfiguration(services);
@@ -88,6 +91,7 @@ internal static class MediatorRegistrationValidator
     /// public constructor. Checking all of them is deliberately conservative — a lifetime error in any
     /// constructor the container could pick is still a latent production failure.
     /// </summary>
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     private static ConstructorInfo[] CandidateConstructors(Type implementationType)
     {
         var constructors = implementationType.GetConstructors(BindingFlags.Instance | BindingFlags.Public);
@@ -180,6 +184,7 @@ internal static class MediatorRegistrationValidator
             "dependency as an open generic, use ServiceLifetime.Scoped (or Transient) for this handler, or " +
             "register it as a closed type.");
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     private static void ValidateScannedOpenGenericHandlers(IServiceCollection services)
     {
         var configuration = GetConfiguration(services);
@@ -202,6 +207,8 @@ internal static class MediatorRegistrationValidator
         }
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateScannedOpenGenericHandlerConflicts(
         IServiceCollection services,
         IEnumerable<IGrouping<Type, ServiceDescriptor>> requestHandlerGroups)
@@ -228,6 +235,8 @@ internal static class MediatorRegistrationValidator
         }
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateNativeOpenGenericHandlers(
         IServiceCollection services,
         IEnumerable<IGrouping<Type, ServiceDescriptor>> requestHandlerGroups)
@@ -253,6 +262,7 @@ internal static class MediatorRegistrationValidator
         }
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     private static void ValidateOpenGenericRegistrations(IServiceCollection services)
     {
         foreach (var descriptor in services)
@@ -299,6 +309,7 @@ internal static class MediatorRegistrationValidator
         }
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     private static void ValidateOpenGenericImplementation(Type implementationType)
     {
         if (implementationType.IsAbstract || implementationType.IsInterface)
@@ -359,6 +370,8 @@ internal static class MediatorRegistrationValidator
         }
     }
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static bool CanCloseNativeOpenGenericHandler(Type implementationType, Type requestType, Type responseType)
     {
         if (implementationType.GetGenericArguments().Length != 2)

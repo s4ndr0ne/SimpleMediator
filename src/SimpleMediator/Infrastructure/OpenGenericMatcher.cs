@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Infrastructure;
@@ -18,6 +19,8 @@ internal static class OpenGenericMatcher
     /// implementation. Returns false when no implemented interface unifies or when the
     /// inferred type arguments violate the implementation's generic constraints.
     /// </summary>
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public static bool TryClose(Type openImplementation, Type requestType, Type responseType, out Type? closedImplementation)
     {
         closedImplementation = null;
@@ -84,7 +87,8 @@ internal static class OpenGenericMatcher
     /// implementation type parameter. Unsupported mappings are rejected during registration
     /// instead of being silently ignored.
     /// </summary>
-    internal static bool CanInferOpenGenericRequestHandler(Type openImplementation)
+    internal static bool CanInferOpenGenericRequestHandler(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type openImplementation)
     {
         var requestInterfaces = openImplementation
             .GetInterfaces()

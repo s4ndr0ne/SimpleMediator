@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Core;
 using SimpleMediator.Infrastructure;
@@ -67,9 +68,13 @@ internal sealed class MediatorConfiguration
     /// Returns the cached set of open-generic handlers that match the given request/response
     /// pair, as pre-compiled object factories. Empty when none match.
     /// </summary>
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public OpenGenericResolution ResolveOpenGeneric(Type requestType, Type responseType)
         => _resolutionCache.GetOrAdd((requestType, responseType), key => BuildResolution(key.Request, key.Response));
 
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private OpenGenericResolution BuildResolution(Type requestType, Type responseType)
     {
         if (CustomOpenGenericRequestHandlers.Count == 0)

@@ -528,6 +528,16 @@ Native AOT and trimming are **explicitly out of scope** for SimpleMediator. The 
 
 `AddSimpleMediator`, `ISender`, `IPublisher`, and the public `Mediator` dispatch methods are annotated with `[RequiresUnreferencedCode]` and `[RequiresDynamicCode]` so unsupported usage produces warnings through both DI and direct-construction entry points. Do not enable `PublishTrimmed` or `PublishAot`; a source-generated/AOT-safe dispatch mode is not part of the current support contract.
 
+The library itself is built with `IsAotCompatible` on `net8.0`/`net10.0`, so every reflection path inside it is annotated and verified by the trim/AOT analyzers: warnings surface only at your call sites, never from inside the package. CI publishes [`samples/SimpleMediator.AotSample`](samples/SimpleMediator.AotSample) with Native AOT to keep it that way. Measured behavior of that native binary today:
+
+| Scenario | Native AOT |
+|---|---|
+| Handlers discovered only through `RegisterAssembly` | Trimmed away unless the assembly is rooted (`<TrimmerRootAssembly Include="..." />`) |
+| Requests with reference-type responses (`IRequest<string>`, `IRequest<MyDto>`), pipeline behaviors | Work (with the assembly rooted) |
+| Void requests (`IRequest` → `Unit`) and value-type responses (`IRequest<int>`) | Fail at runtime (`NotSupportedException`: missing native code for the generic wrapper) |
+
+Full support requires compile-time generated registrations and dispatch; until then the annotations stay on the dispatch APIs on purpose.
+
 > **Consumer builds with trimming or AOT.** Those annotations mean a project with `PublishTrimmed`
 > or `PublishAot` **and** `TreatWarningsAsErrors` fails to compile on `AddSimpleMediator` and on
 > every `Send`/`Publish` call site, with `IL2026` and `IL3050`. If you are knowingly running

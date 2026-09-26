@@ -13,8 +13,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Dependabot for NuGet and GitHub Actions, weekly, with grouped updates (test stack, Microsoft.Extensions, analyzers/packaging, benchmarks).
 - `NuGet.config` locked to nuget.org with package source mapping, so machine-level private feeds cannot enter resolution (dependency-confusion protection).
 - Repository governance: `CODEOWNERS`, pull request template, bug/feature issue forms, `SECURITY.md` (private vulnerability reporting, supported versions) and `CONTRIBUTING.md` (layout, build/test commands, conventions, release process).
+- Trim/AOT analysis for the library: `IsAotCompatible` on `net8.0`/`net10.0`. Every internal reflection path is now annotated (`[DynamicallyAccessedMembers]` for metadata-only access, `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]` where generic types are closed at runtime), so trim/AOT warnings surface only at consumer call sites.
+- `samples/SimpleMediator.AotSample` and an `aot-smoke` CI job that publishes it with Native AOT and fails on any trim/AOT warning originating inside the library. Running the binary is informational until a source-generated dispatch path exists (value-type responses such as `Unit` are not yet AOT-safe).
 
 ### Changed
+- `ValidateSimpleMediator` is now annotated with `[RequiresUnreferencedCode]` in addition to `[RequiresDynamicCode]`, reflecting that it inspects handler types via reflection. Warning-only; no API change.
+- `SimpleMediatorOptions.AddBehavior(Type)` declares `[DynamicallyAccessedMembers(Interfaces | PublicConstructors)]` on its parameter. `typeof(...)` arguments are unaffected; trimming-enabled callers passing a non-constant `Type` get an `IL2067` warning. Warning-only; no API change.
 - Repository layout: library-only `src/`; tests moved to `tests/` (`SimpleMediator.Tests`, `SimpleMediator.IntegrationTests`, `SimpleMediator.SafetyTests`), the console demo to `samples/SimpleMediator.Console`, and the benchmarks project added to the solution. Solution folders now mirror the directory layout.
 - Internal namespaces now match their folders (`SimpleMediator.Configuration`, `SimpleMediator.Infrastructure`); the public API namespaces are unchanged, and the three public configuration types moved to the project root because their namespace is `SimpleMediator`.
 

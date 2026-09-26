@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 
 namespace SimpleMediator.Infrastructure;
 
-internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
+// Lazy<T> declares DynamicallyAccessedMembers(PublicParameterlessConstructor) on T for its
+// default constructor; the annotation is propagated so trimming keeps the requirement visible.
+internal sealed class BoundedFactoryCache<TKey, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] TValue> where TKey : notnull
 {
     private readonly ConcurrentDictionary<TKey, CacheEntry> _entries = new();
     private readonly LinkedList<TKey> _order = new();
