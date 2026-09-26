@@ -3,10 +3,12 @@ using System.Reflection.Emit;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator;
+using SimpleMediator.Configuration;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.Test;
+namespace SimpleMediator.Tests;
 
 public class UnitTest1
 {

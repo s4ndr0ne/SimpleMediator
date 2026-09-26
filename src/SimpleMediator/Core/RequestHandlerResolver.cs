@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Configuration;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Core;

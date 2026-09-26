@@ -1,7 +1,7 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator;
 using SimpleMediator.Interfaces;
-using SimpleMediator.ConsoleTest;
+using SimpleMediator.ConsoleSample;
 
 var services = new ServiceCollection();
 

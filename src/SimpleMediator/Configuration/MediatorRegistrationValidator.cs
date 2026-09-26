@@ -2,9 +2,11 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
+using SimpleMediator;
 
-namespace SimpleMediator;
+namespace SimpleMediator.Configuration;
 
 /// <summary>
 /// Validates request-handler, open-generic, behavior, and concrete implementation

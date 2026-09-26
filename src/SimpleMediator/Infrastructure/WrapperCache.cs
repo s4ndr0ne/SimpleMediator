@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace SimpleMediator.Core;
+namespace SimpleMediator.Infrastructure;
 
 /// <summary>
 /// Unbounded, single-flight cache for the per-type dispatch wrappers.

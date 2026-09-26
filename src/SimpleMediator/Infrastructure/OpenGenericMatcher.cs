@@ -1,6 +1,6 @@
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.Core;
+namespace SimpleMediator.Infrastructure;
 
 /// <summary>
 /// Closes a non-native open-generic request-handler implementation against a concrete

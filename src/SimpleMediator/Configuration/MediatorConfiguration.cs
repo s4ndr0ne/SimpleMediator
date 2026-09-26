@@ -1,7 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
+using SimpleMediator;
 
-namespace SimpleMediator;
+namespace SimpleMediator.Configuration;
 
 /// <summary>
 /// Immutable runtime configuration resolved by the mediator core from DI.

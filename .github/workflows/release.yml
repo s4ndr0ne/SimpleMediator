@@ -31,12 +31,15 @@ jobs:
           fi
           echo "package_version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Setup .NET
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            8.0.x
-            10.0.x
+          global-json-file: global.json
+
+      - name: Setup .NET 8 runtime
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
       - name: Restore dependencies
         run: dotnet restore -p:Version=${{ steps.version.outputs.package_version }}

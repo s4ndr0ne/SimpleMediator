@@ -3,9 +3,11 @@ using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
+using SimpleMediator;
 
-namespace SimpleMediator;
+namespace SimpleMediator.Configuration;
 
 /// <summary>
 /// Discovers closed handlers and registers supported open-generic implementations from

@@ -1,7 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.Test;
+namespace SimpleMediator.Tests;
 
 public class SenderPublisherTests
 {

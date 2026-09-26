@@ -1,10 +1,12 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator;
+using SimpleMediator.Configuration;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.SafetyTest;
+namespace SimpleMediator.SafetyTests;
 
 /// <summary>
 /// Regression tests for the scope, lifetime, and failure-routing defects found in the v4 baseline

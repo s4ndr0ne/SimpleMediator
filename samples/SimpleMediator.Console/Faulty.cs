@@ -1,6 +1,6 @@
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.ConsoleTest;
+namespace SimpleMediator.ConsoleSample;
 
 public record FaultyRequest(string Message) : IRequest<string>;
 

@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using SimpleMediator.Configuration;
 using SimpleMediator.Interfaces;
 using SimpleMediator.Core;
 

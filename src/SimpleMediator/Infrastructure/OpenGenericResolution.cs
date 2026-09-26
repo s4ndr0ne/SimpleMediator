@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 
-namespace SimpleMediator;
+namespace SimpleMediator.Infrastructure;
 
 /// <summary>
 /// The cached plan for resolving custom-mapped open-generic request handlers for one

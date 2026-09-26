@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator;

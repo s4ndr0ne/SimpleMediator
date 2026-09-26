@@ -1,6 +1,6 @@
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator;
+namespace SimpleMediator.Infrastructure;
 
 /// <summary>
 /// Checks whether an open-generic implementation follows the type-parameter mapping

@@ -1,6 +1,6 @@
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.ConsoleTest;
+namespace SimpleMediator.ConsoleSample;
 
 // A generic request: the SAME open-generic handler below serves every closed T.
 public record EchoRequest<T>(T Value) : IRequest<T>;

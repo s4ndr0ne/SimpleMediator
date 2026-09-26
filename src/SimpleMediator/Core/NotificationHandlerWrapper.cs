@@ -1,4 +1,5 @@
 using System.Runtime.ExceptionServices;
+using SimpleMediator.Configuration;
 using SimpleMediator.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 namespace SimpleMediator.Core;

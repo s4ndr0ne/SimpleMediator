@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading;
 
-namespace SimpleMediator.Core;
+namespace SimpleMediator.Infrastructure;
 
 internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
 {

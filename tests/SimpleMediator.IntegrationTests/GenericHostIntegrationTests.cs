@@ -4,7 +4,7 @@ using SimpleMediator;
 using SimpleMediator.Interfaces;
 
 using SimpleMediator.Core;
-namespace SimpleMediator.IntegrationTest;
+namespace SimpleMediator.IntegrationTests;
 
 public sealed class GenericHostIntegrationTests
 {

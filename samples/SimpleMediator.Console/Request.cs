@@ -1,6 +1,6 @@
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.ConsoleTest;
+namespace SimpleMediator.ConsoleSample;
 
 public class Request : IRequest<Response>
 {

@@ -2,10 +2,12 @@ using System.Reflection;
 using System.Reflection.Emit;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator;
+using SimpleMediator.Configuration;
 using SimpleMediator.Core;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
-namespace SimpleMediator.SafetyTest;
+namespace SimpleMediator.SafetyTests;
 
 /// <summary>
 /// Regression tests for the defects found in the post-v4 review. Each test pins one fix.
