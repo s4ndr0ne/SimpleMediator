@@ -21,15 +21,21 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
 
     public object GetOrAdd(TKey key, Func<TKey, object> factory)
     {
-        ArgumentNullException.ThrowIfNull(factory);
+        ThrowHelper.ThrowIfNull(factory);
 
         if (!_entries.TryGetValue(key, out var entry))
         {
             // Lazy keeps concurrent first use single-flight: only the winning entry's factory runs.
+#if NETSTANDARD2_0
+            entry = _entries.GetOrAdd(
+                key,
+                k => new Lazy<object>(() => factory(k), LazyThreadSafetyMode.ExecutionAndPublication));
+#else
             entry = _entries.GetOrAdd(
                 key,
                 static (k, f) => new Lazy<object>(() => f(k), LazyThreadSafetyMode.ExecutionAndPublication),
                 factory);
+#endif
         }
 
         try
@@ -40,7 +46,11 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
         {
             // Do not poison the cache with a faulted Lazy: remove this exact entry (a concurrent
             // replacement for the same key is preserved) so a later call can retry.
+#if NETSTANDARD2_0
+            _ = ((ICollection<KeyValuePair<TKey, Lazy<object>>>)_entries).Remove(new KeyValuePair<TKey, Lazy<object>>(key, entry));
+#else
             _ = _entries.TryRemove(new KeyValuePair<TKey, Lazy<object>>(key, entry));
+#endif
             throw;
         }
     }

@@ -11,7 +11,15 @@ public interface IOrderedPipelineBehavior
     /// runs first. Defaults to <c>0</c>. The value is read once per request, so it may
     /// depend on scoped state, but it must be stable for the duration of a single request.
     /// </summary>
+    /// <remarks>
+    /// On runtimes without default-interface support (netstandard2.0) implementers must
+    /// declare the property explicitly; returning <c>0</c> reproduces the default.
+    /// </remarks>
+#if NETSTANDARD2_0
+    int Order { get; }
+#else
     int Order => 0;
+#endif
 }
 
 /// <summary>

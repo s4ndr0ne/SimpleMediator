@@ -12,7 +12,7 @@ internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
 
     public BoundedFactoryCache(int capacity)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
+        ThrowHelper.ThrowIfNegativeOrZero(capacity);
 
         _capacity = capacity;
     }
@@ -32,7 +32,7 @@ internal sealed class BoundedFactoryCache<TKey, TValue> where TKey : notnull
 
     public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)
     {
-        ArgumentNullException.ThrowIfNull(factory);
+        ThrowHelper.ThrowIfNull(factory);
 
         // Lock-free read on hot path: TryGetValue on ConcurrentDictionary acquires zero locks.
         if (_entries.TryGetValue(key, out var existing))

@@ -9,6 +9,7 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 [![NuGet Downloads](https://img.shields.io/nuget/dt/s4ndr0ne.SimpleMediator?logo=nuget)](https://www.nuget.org/packages/s4ndr0ne.SimpleMediator)
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/8.0)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/10.0)
+[![.NET Standard 2.0](https://img.shields.io/badge/.NET%20Standard-2.0-512BD4?logo=dotnet)](https://learn.microsoft.com/dotnet/standard/net-standard)
 
 ## Core Features & Optimizations
 
@@ -18,6 +19,7 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 - **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
 - **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
+- **🎯 Target frameworks**: `net8.0`, `net10.0` and `netstandard2.0` (for legacy consumers such as .NET Framework 4.7.2+; on netstandard2.0, `IAsyncDisposable` and `ValueTask` come from `Microsoft.Bcl.AsyncInterfaces`, and implementers of `IOrderedPipelineBehavior` / `IRequestExceptionHandler<,>` must declare `Order` explicitly because default interface members are not supported).
 
 ## Installation
 This library is intended to be used as a NuGet package. To install it, use the .NET CLI:

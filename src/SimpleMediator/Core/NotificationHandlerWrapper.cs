@@ -56,7 +56,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         if (handlerArray.Length == 1)
         {
             var singleTask = InvokeSafely(handlerArray[0], notification, cancellationToken);
-            if (singleTask.IsCompletedSuccessfully) return;
+            if (singleTask.Status == TaskStatus.RanToCompletion) return;
 
             // Avoid Task.WhenAll allocation on the hot success path. Faulted single-handler
             // requests are normalized below to the original exception.

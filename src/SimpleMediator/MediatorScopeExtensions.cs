@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 
 namespace SimpleMediator;
 
@@ -38,7 +39,7 @@ public static class MediatorScopeExtensions
     /// </exception>
     public static IMediatorScope CreateMediatorScope(this IServiceScopeFactory scopeFactory)
     {
-        ArgumentNullException.ThrowIfNull(scopeFactory);
+        ThrowHelper.ThrowIfNull(scopeFactory);
 
         var scope = scopeFactory.CreateScope();
         try
@@ -70,7 +71,7 @@ public static class MediatorScopeExtensions
     /// </exception>
     public static IMediatorScope CreateMediatorScope(this IServiceProvider serviceProvider)
     {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
+        ThrowHelper.ThrowIfNull(serviceProvider);
 
         // Microsoft DI does not implement IServiceScopeFactory on the provider type; it exposes it
         // as a registered service. Resolving it is also what proves which provider is the root one.

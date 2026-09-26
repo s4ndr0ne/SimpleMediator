@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 
 namespace SimpleMediator.Core;
 
@@ -28,7 +29,7 @@ internal static class ServiceProviderScopeFacts
     /// </remarks>
     public static bool IsRootProvider(IServiceProvider serviceProvider)
     {
-        ArgumentNullException.ThrowIfNull(serviceProvider);
+        ThrowHelper.ThrowIfNull(serviceProvider);
 
         var scopeFactory = serviceProvider.GetService<IServiceScopeFactory>();
         if (scopeFactory is null)

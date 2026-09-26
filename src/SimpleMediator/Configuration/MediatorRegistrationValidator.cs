@@ -64,8 +64,7 @@ internal static class MediatorRegistrationValidator
             return;
         }
 
-        foreach (var registration in configuration.CustomOpenGenericRequestHandlers
-                     .DistinctBy(item => item.ImplementationType))
+        foreach (var registration in DistinctByImplementationType(configuration.CustomOpenGenericRequestHandlers))
         {
             if (registration.Lifetime != ServiceLifetime.Singleton)
             {
@@ -125,7 +124,7 @@ internal static class MediatorRegistrationValidator
 
         // Microsoft DI resolves a single service from the LAST registration; an enumerable receives
         // all of them.
-        IEnumerable<ServiceDescriptor> relevant = isEnumerable ? descriptors : [descriptors[^1]];
+        IEnumerable<ServiceDescriptor> relevant = isEnumerable ? descriptors : [descriptors[descriptors.Count - 1]];
         var offending = relevant.FirstOrDefault(descriptor => descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient);
         if (offending is null)
         {
@@ -139,6 +138,19 @@ internal static class MediatorRegistrationValidator
             "application, so it would capture — and outlive — that dependency, handing out a disposed " +
             "instance to later requests. Use ServiceLifetime.Scoped (or Transient) for this handler, or " +
             "register a closed handler instead.");
+    }
+
+    // Enumerable.DistinctBy is not available on netstandard2.0.
+    private static IEnumerable<OpenGenericHandlerRegistration> DistinctByImplementationType(IReadOnlyList<OpenGenericHandlerRegistration> registrations)
+    {
+        var seen = new HashSet<Type>();
+        foreach (var registration in registrations)
+        {
+            if (seen.Add(registration.ImplementationType))
+            {
+                yield return registration;
+            }
+        }
     }
 
     /// <summary>
@@ -176,7 +188,7 @@ internal static class MediatorRegistrationValidator
             return;
         }
 
-        foreach (var registration in configuration.CustomOpenGenericRequestHandlers.DistinctBy(item => item.ImplementationType))
+        foreach (var registration in DistinctByImplementationType(configuration.CustomOpenGenericRequestHandlers))
         {
             var openHandler = registration.ImplementationType;
             ValidateOpenGenericImplementation(openHandler);

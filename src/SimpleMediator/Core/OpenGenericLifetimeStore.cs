@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 
 namespace SimpleMediator.Core;
 
@@ -18,7 +19,7 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
     {
         lock (_gate)
         {
-            ObjectDisposedException.ThrowIf(_disposed, this);
+            ThrowHelper.ThrowIfDisposed(_disposed, this);
             if (_instances.TryGetValue(key, out var existing))
             {
                 return existing;

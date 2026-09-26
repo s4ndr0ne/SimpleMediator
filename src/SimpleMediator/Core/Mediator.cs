@@ -59,7 +59,7 @@ public class Mediator : IMediator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        ThrowHelper.ThrowIfNull(request);
         await Send<Unit>(request, cancellationToken).ConfigureAwait(false);
     }
 
@@ -68,7 +68,7 @@ public class Mediator : IMediator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(request);
+        ThrowHelper.ThrowIfNull(request);
 
         var requestType = request.GetType();
 
@@ -90,7 +90,7 @@ public class Mediator : IMediator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
     {
-        ArgumentNullException.ThrowIfNull(notification);
+        ThrowHelper.ThrowIfNull(notification);
 
         var notificationType = notification.GetType();
 

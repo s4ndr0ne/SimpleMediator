@@ -111,9 +111,9 @@ internal static class RequestHandlerResolver
                     return asyncDisposable.DisposeAsync();
                 case IDisposable disposable:
                     disposable.Dispose();
-                    return ValueTask.CompletedTask;
+                    return default;
                 default:
-                    return ValueTask.CompletedTask;
+                    return default;
             }
         }
     }

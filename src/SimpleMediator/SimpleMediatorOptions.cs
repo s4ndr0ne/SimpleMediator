@@ -123,7 +123,7 @@ public class SimpleMediatorOptions
     /// <returns>This options instance for chaining.</returns>
     public SimpleMediatorOptions RegisterAssembly(Assembly assembly, Func<Type, bool>? filter)
     {
-        ArgumentNullException.ThrowIfNull(assembly);
+        ThrowHelper.ThrowIfNull(assembly);
 
         if (!Assemblies.Contains(assembly))
         {
@@ -152,7 +152,7 @@ public class SimpleMediatorOptions
     /// </summary>
     public SimpleMediatorOptions AddBehavior(Type behaviorType)
     {
-        ArgumentNullException.ThrowIfNull(behaviorType);
+        ThrowHelper.ThrowIfNull(behaviorType);
 
         var implementsPipelineBehavior = OpenGenericRegistrationRules.ImplementsPipelineBehavior(behaviorType);
 

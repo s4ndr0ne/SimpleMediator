@@ -49,8 +49,9 @@ public abstract class RequestHandler<TRequest> : IRequestHandler<TRequest, Unit>
         }
 
         // A cancelled Task is completed and has no Exception, but it must still
-        // propagate its OperationCanceledException to the caller.
-        return task.IsCompletedSuccessfully
+        // propagate its OperationCanceledException to the caller. Status comparison is
+        // Task.IsCompletedSuccessfully spelled for netstandard2.0.
+        return task.Status == TaskStatus.RanToCompletion
             ? Unit.Task
             : ContinueWithUnit(task);
     }

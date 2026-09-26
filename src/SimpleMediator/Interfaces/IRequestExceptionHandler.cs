@@ -44,7 +44,15 @@ public interface IRequestExceptionHandler<in TRequest, TResponse>
     /// relative order of scanned handlers must be fixed, give them distinct values: assembly-scan
     /// discovery order is stable by type name but is not a contract.
     /// </summary>
+    /// <remarks>
+    /// On runtimes without default-interface support (netstandard2.0) implementers must
+    /// declare the property explicitly; returning <c>0</c> reproduces the default.
+    /// </remarks>
+#if NETSTANDARD2_0
+    int Order { get; }
+#else
     int Order => 0;
+#endif
 
     /// <summary>
     /// Handles the exception thrown during request processing.

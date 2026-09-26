@@ -51,7 +51,7 @@ internal sealed class MediatorConfiguration
         bool requireScopedMediator = true,
         bool requireScopedMediatorIsExplicit = false)
     {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(resolutionCacheCapacity);
+        ThrowHelper.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
         ResolutionCacheCapacity = resolutionCacheCapacity;
         ValidationRequested = validationRequested;

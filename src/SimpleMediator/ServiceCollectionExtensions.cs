@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using SimpleMediator.Configuration;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 using SimpleMediator.Core;
 
@@ -33,8 +34,8 @@ public static class ServiceCollectionExtensions
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection AddSimpleMediator(this IServiceCollection services, Action<SimpleMediatorOptions> configure)
     {
-        ArgumentNullException.ThrowIfNull(services);
-        ArgumentNullException.ThrowIfNull(configure);
+        ThrowHelper.ThrowIfNull(services);
+        ThrowHelper.ThrowIfNull(configure);
 
         var options = new SimpleMediatorOptions();
         configure(options);
@@ -52,7 +53,7 @@ public static class ServiceCollectionExtensions
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection AddSimpleMediator(this IServiceCollection services)
     {
-        ArgumentNullException.ThrowIfNull(services);
+        ThrowHelper.ThrowIfNull(services);
         return AddSimpleMediatorCore(services, new SimpleMediatorOptions());
     }
 
@@ -97,7 +98,7 @@ public static class ServiceCollectionExtensions
     [RequiresDynamicCode(DynamicCodeMessage)]
     public static IServiceCollection ValidateSimpleMediator(this IServiceCollection services)
     {
-        ArgumentNullException.ThrowIfNull(services);
+        ThrowHelper.ThrowIfNull(services);
         MediatorRegistrationValidator.Validate(services);
 
         var configuration = services
@@ -155,6 +156,18 @@ public static class ServiceCollectionExtensions
 
     private static void ValidateOptions(SimpleMediatorOptions options)
     {
+#if NETSTANDARD2_0
+        // The generic Enum.IsDefined overload is not available on netstandard2.0.
+        if (!Enum.IsDefined(typeof(ServiceLifetime), options.DefaultLifetime))
+        {
+            throw new ArgumentException("DefaultLifetime must be a defined ServiceLifetime value.");
+        }
+
+        if (!Enum.IsDefined(typeof(NotificationPublishStrategy), options.NotificationPublishStrategy))
+        {
+            throw new ArgumentException("NotificationPublishStrategy must be a defined NotificationPublishStrategy value.");
+        }
+#else
         if (!Enum.IsDefined(options.DefaultLifetime))
         {
             throw new ArgumentException("DefaultLifetime must be a defined ServiceLifetime value.");
@@ -164,8 +177,9 @@ public static class ServiceCollectionExtensions
         {
             throw new ArgumentException("NotificationPublishStrategy must be a defined NotificationPublishStrategy value.");
         }
+#endif
 
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.OpenGenericResolutionCacheCapacity);
+        ThrowHelper.ThrowIfNegativeOrZero(options.OpenGenericResolutionCacheCapacity);
     }
 
     private static MediatorConfiguration MergeConfiguration(

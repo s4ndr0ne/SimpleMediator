@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **netstandard2.0 target** alongside `net8.0` and `net10.0`, for legacy consumers (.NET Framework 4.7.2+, .NET Core 2.x). `IAsyncDisposable`/`ValueTask` flow transitively via `Microsoft.Bcl.AsyncInterfaces` on that target only; the public API surface is identical across targets, with one documented difference: `IOrderedPipelineBehavior.Order` and `IRequestExceptionHandler<,>.Order` have no default interface implementation on netstandard2.0 (not supported by the runtime), so implementers must declare the property — returning `0` reproduces the default.
+- SDK pinning via `global.json` (10.0.400, `latestFeature` roll-forward), honored by CI.
+- Central package versioning via `Directory.Packages.props` with transitive pinning.
+
+### Changed
+- Repository layout: library-only `src/`; tests moved to `tests/` (`SimpleMediator.Tests`, `SimpleMediator.IntegrationTests`, `SimpleMediator.SafetyTests`), the console demo to `samples/SimpleMediator.Console`, and the benchmarks project added to the solution. Solution folders now mirror the directory layout.
+- Internal namespaces now match their folders (`SimpleMediator.Configuration`, `SimpleMediator.Infrastructure`); the public API namespaces are unchanged, and the three public configuration types moved to the project root because their namespace is `SimpleMediator`.
+
 ## [4.0.0] - 2026-09-25
 
 ### Changed
