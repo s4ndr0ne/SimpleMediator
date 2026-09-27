@@ -156,6 +156,94 @@ public class EnterpriseSafetyTests
         Assert.Contains(nameof(ScopeCounter), exception.Message);
     }
 
+    [Theory]
+    [InlineData(ServiceLifetime.Singleton)]
+    [InlineData(ServiceLifetime.Scoped)]
+    public async Task CustomOpenGenericHandler_RetainsLifetimeAfterResolutionCacheEviction(ServiceLifetime lifetime)
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = lifetime;
+            options.OpenGenericResolutionCacheCapacity = 1;
+            options.RegisterAssembly(typeof(EnterpriseSafetyTests).Assembly,
+                type => type == typeof(EvictionHandler<>));
+        });
+
+        using var provider = services.BuildServiceProvider();
+        using var firstScope = provider.CreateScope();
+        var firstMediator = firstScope.ServiceProvider.GetRequiredService<IMediator>();
+        var first = await firstMediator.Send<Guid>(new EvictionRequest<int>());
+        _ = await firstMediator.Send<Guid>(new EvictionRequest<string>());
+        var again = await firstMediator.Send<Guid>(new EvictionRequest<int>());
+        Assert.Equal(first, again);
+
+        using var secondScope = provider.CreateScope();
+        var secondMediator = secondScope.ServiceProvider.GetRequiredService<IMediator>();
+        var otherScope = await secondMediator.Send<Guid>(new EvictionRequest<int>());
+        if (lifetime == ServiceLifetime.Singleton)
+        {
+            Assert.Equal(first, otherScope);
+        }
+        else
+        {
+            Assert.NotEqual(first, otherScope);
+        }
+    }
+
+    [Fact]
+    public void SingletonCustomOpenGenericHandler_WithNestedScopedDependency_IsRejected()
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<ScopeCounter>();
+        services.AddSingleton<NestedDependency>();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddSimpleMediator(options =>
+            {
+                options.DefaultLifetime = ServiceLifetime.Singleton;
+                options.RegisterAssembly(typeof(EnterpriseSafetyTests).Assembly,
+                    type => type == typeof(NestedCapturingHandler<>));
+            }));
+
+        Assert.Contains(nameof(ScopeCounter), exception.Message);
+    }
+
+    [Fact]
+    public void SingletonCustomOpenGenericHandler_WithKeyedScopedDependency_IsRejected()
+    {
+        var services = new ServiceCollection();
+        services.AddKeyedScoped<ScopeCounter>("tenant");
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddSimpleMediator(options =>
+            {
+                options.DefaultLifetime = ServiceLifetime.Singleton;
+                options.RegisterAssembly(typeof(EnterpriseSafetyTests).Assembly,
+                    type => type == typeof(KeyedCapturingHandler<>));
+            }));
+
+        Assert.Contains(nameof(ScopeCounter), exception.Message);
+    }
+
+    [Fact]
+    public void SingletonCustomOpenGenericHandler_WithScopedOpenGenericInEnumerable_IsRejected()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IList<int>, List<int>>();
+        services.AddScoped(typeof(IList<>), typeof(List<>));
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddSimpleMediator(options =>
+            {
+                options.DefaultLifetime = ServiceLifetime.Singleton;
+                options.RegisterAssembly(typeof(EnterpriseSafetyTests).Assembly,
+                    type => type == typeof(EnumerableCapturingHandler<>));
+            }));
+
+        Assert.Contains("Scoped", exception.Message);
+    }
+
     [Fact]
     public async Task ScopedCustomOpenGenericHandler_StillSharesOneInstancePerScope()
     {
@@ -577,6 +665,51 @@ public sealed class SingletonCapturingHandler<T> : IRequestHandler<SingletonCapt
 
     public Task<Guid> Handle(SingletonCapturingRequest<T> request, CancellationToken cancellationToken)
         => Task.FromResult(_counter.Id);
+}
+
+public sealed record EvictionRequest<T> : IRequest<Guid>;
+
+public sealed class EvictionHandler<T> : IRequestHandler<EvictionRequest<T>, Guid>
+{
+    private readonly Guid _id = Guid.NewGuid();
+
+    public Task<Guid> Handle(EvictionRequest<T> request, CancellationToken cancellationToken)
+        => Task.FromResult(_id);
+}
+
+public sealed record NestedCapturingRequest<T> : IRequest<Guid>;
+
+public sealed class NestedDependency
+{
+    public NestedDependency(ScopeCounter counter) { }
+}
+
+public sealed class NestedCapturingHandler<T> : IRequestHandler<NestedCapturingRequest<T>, Guid>
+{
+    public NestedCapturingHandler(NestedDependency dependency) { }
+
+    public Task<Guid> Handle(NestedCapturingRequest<T> request, CancellationToken cancellationToken)
+        => Task.FromResult(Guid.Empty);
+}
+
+public sealed record KeyedCapturingRequest<T> : IRequest<Guid>;
+
+public sealed class KeyedCapturingHandler<T> : IRequestHandler<KeyedCapturingRequest<T>, Guid>
+{
+    public KeyedCapturingHandler([FromKeyedServices("tenant")] ScopeCounter counter) { }
+
+    public Task<Guid> Handle(KeyedCapturingRequest<T> request, CancellationToken cancellationToken)
+        => Task.FromResult(Guid.Empty);
+}
+
+public sealed record EnumerableCapturingRequest<T> : IRequest<Guid>;
+
+public sealed class EnumerableCapturingHandler<T> : IRequestHandler<EnumerableCapturingRequest<T>, Guid>
+{
+    public EnumerableCapturingHandler(IEnumerable<IList<int>> dependencies) { }
+
+    public Task<Guid> Handle(EnumerableCapturingRequest<T> request, CancellationToken cancellationToken)
+        => Task.FromResult(Guid.Empty);
 }
 
 public sealed record ScopedCapturingRequest<T> : IRequest<Guid>;

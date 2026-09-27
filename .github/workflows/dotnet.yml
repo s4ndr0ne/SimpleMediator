@@ -31,12 +31,10 @@ jobs:
       uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 8.0.x
-    - name: Restore dependencies
-      run: dotnet restore
+    - name: Restore and audit dependencies
+      run: dotnet restore -p:NuGetAudit=true -p:NuGetAuditMode=all -p:NuGetAuditLevel=low -warnaserror:NU1901,NU1902,NU1903,NU1904
     - name: Build
       run: dotnet build --no-restore
-    - name: Check vulnerable packages
-      run: dotnet list package --vulnerable --include-transitive
     - name: Test
       run: dotnet test --no-build --verbosity normal --collect:"XPlat Code Coverage" --settings coverlet.runsettings
 

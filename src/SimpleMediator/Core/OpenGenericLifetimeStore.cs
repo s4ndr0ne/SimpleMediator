@@ -10,11 +10,11 @@ namespace SimpleMediator.Core;
 internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
 {
     private readonly object _gate = new();
-    private readonly Dictionary<(Type Request, Type Response, ObjectFactory Factory), object> _instances = new();
+    private readonly Dictionary<(Type Implementation, Type Request, Type Response), object> _instances = new();
     private bool _disposed;
 
     public object GetOrAdd(
-        (Type Request, Type Response, ObjectFactory Factory) key,
+        (Type Implementation, Type Request, Type Response) key,
         Func<object> factory)
     {
         lock (_gate)

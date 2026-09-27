@@ -17,6 +17,7 @@ internal sealed class OpenGenericResolution
 }
 
 internal sealed record OpenGenericHandlerFactory(
+    Type ImplementationType,
     ObjectFactory Factory,
     ServiceLifetime Lifetime,
     Type RequestType,

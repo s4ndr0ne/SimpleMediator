@@ -69,18 +69,10 @@ internal static class MediatorRegistrationValidator
 
         foreach (var registration in DistinctByImplementationType(configuration.CustomOpenGenericRequestHandlers))
         {
-            if (registration.Lifetime != ServiceLifetime.Singleton)
+            if (registration.Lifetime == ServiceLifetime.Singleton)
             {
-                continue;
-            }
-
-            var handlerType = registration.ImplementationType;
-            foreach (var constructor in CandidateConstructors(handlerType))
-            {
-                foreach (var parameter in constructor.GetParameters())
-                {
-                    ValidateSingletonDependency(services, handlerType, parameter.ParameterType);
-                }
+                ValidateSingletonConstructorDependencies(
+                    services, registration.ImplementationType, registration.ImplementationType, new HashSet<Type>());
             }
         }
     }
@@ -99,10 +91,32 @@ internal static class MediatorRegistrationValidator
         return marked.Length > 0 ? marked : constructors;
     }
 
-    private static void ValidateSingletonDependency(IServiceCollection services, Type handlerType, Type dependencyType)
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    private static void ValidateSingletonConstructorDependencies(
+        IServiceCollection services, Type handlerType, Type implementationType, HashSet<Type> visited)
     {
-        // A dependency on IEnumerable<T> receives every registration of T, so the shortest-lived of
-        // them decides whether the singleton would capture a scoped or transient instance.
+        if (!visited.Add(implementationType))
+        {
+            return;
+        }
+
+        foreach (var constructor in CandidateConstructors(implementationType))
+        {
+            foreach (var parameter in constructor.GetParameters())
+            {
+                var keyed = parameter.GetCustomAttribute<FromKeyedServicesAttribute>();
+                ValidateSingletonDependency(services, handlerType, parameter.ParameterType,
+                    keyed is not null, keyed?.Key, visited);
+            }
+        }
+    }
+
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    private static void ValidateSingletonDependency(
+        IServiceCollection services, Type handlerType, Type dependencyType,
+        bool isKeyed, object? serviceKey, HashSet<Type> visited)
+    {
+        // A dependency on IEnumerable<T> receives every registration of T.
         var isEnumerable = dependencyType.IsGenericType &&
                            dependencyType.GetGenericTypeDefinition() == typeof(IEnumerable<>);
         var serviceType = isEnumerable ? dependencyType.GetGenericArguments()[0] : dependencyType;
@@ -112,12 +126,9 @@ internal static class MediatorRegistrationValidator
             throw UnknowableDependency(handlerType, dependencyType);
         }
 
-        var descriptors = FindDescriptors(services, serviceType);
+        var descriptors = FindDescriptors(services, serviceType, isKeyed, serviceKey, isEnumerable);
         if (descriptors.Count == 0)
         {
-            // Not registered at all: DI reports that itself. But a dependency whose closed type is only
-            // known once the handler is closed, with no open-generic registration to read a lifetime
-            // from, cannot be checked up front.
             if (serviceType.ContainsGenericParameters)
             {
                 throw UnknowableDependency(handlerType, dependencyType);
@@ -126,22 +137,26 @@ internal static class MediatorRegistrationValidator
             return;
         }
 
-        // Microsoft DI resolves a single service from the LAST registration; an enumerable receives
-        // all of them.
+        // Microsoft DI resolves a single service from the LAST registration; an enumerable receives all.
         IEnumerable<ServiceDescriptor> relevant = isEnumerable ? descriptors : [descriptors[descriptors.Count - 1]];
-        var offending = relevant.FirstOrDefault(descriptor => descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient);
-        if (offending is null)
+        foreach (var descriptor in relevant)
         {
-            return;
-        }
+            if (descriptor.Lifetime is ServiceLifetime.Scoped or ServiceLifetime.Transient)
+            {
+                throw new InvalidOperationException(
+                    $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
+                    $"dependency graph includes '{dependencyType.FullName ?? dependencyType.Name}', which is registered as " +
+                    $"{descriptor.Lifetime}. SimpleMediator builds this handler once and reuses it for the whole " +
+                    "application, so it would capture — and outlive — that dependency. Use ServiceLifetime.Scoped " +
+                    "(or Transient) for this handler, or register a closed handler instead.");
+            }
 
-        throw new InvalidOperationException(
-            $"Open-generic request handler '{handlerType.FullName}' is registered as a Singleton, but its " +
-            $"constructor depends on '{dependencyType.FullName ?? dependencyType.Name}', which is registered as " +
-            $"{offending.Lifetime}. SimpleMediator builds this handler once and reuses it for the whole " +
-            "application, so it would capture — and outlive — that dependency, handing out a disposed " +
-            "instance to later requests. Use ServiceLifetime.Scoped (or Transient) for this handler, or " +
-            "register a closed handler instead.");
+            var implementation = descriptor.IsKeyedService ? descriptor.KeyedImplementationType : descriptor.ImplementationType;
+            if (implementation is not null)
+            {
+                ValidateSingletonConstructorDependencies(services, handlerType, implementation, visited);
+            }
+        }
     }
 
     // Enumerable.DistinctBy is not available on netstandard2.0.
@@ -162,17 +177,20 @@ internal static class MediatorRegistrationValidator
     /// constructed generic such as <c>ILogger&lt;Handler&lt;T&gt;&gt;</c> — registrations of its
     /// open-generic definition (<c>ILogger&lt;&gt;</c>). Returned in registration order.
     /// </summary>
-    private static List<ServiceDescriptor> FindDescriptors(IServiceCollection services, Type serviceType)
+    private static List<ServiceDescriptor> FindDescriptors(
+        IServiceCollection services, Type serviceType, bool isKeyed, object? serviceKey, bool isEnumerable)
     {
-        // A constructor parameter without [FromKeyedServices] is satisfied by non-keyed registrations only.
-        var exact = services.Where(descriptor => !descriptor.IsKeyedService && descriptor.ServiceType == serviceType).ToList();
-        if (exact.Count > 0 || !serviceType.IsGenericType)
+        var definition = serviceType.IsGenericType ? serviceType.GetGenericTypeDefinition() : null;
+        var exact = services.Where(descriptor => descriptor.IsKeyedService == isKeyed &&
+            (!isKeyed || Equals(descriptor.ServiceKey, serviceKey)) && descriptor.ServiceType == serviceType).ToList();
+        if (!isEnumerable && (exact.Count > 0 || definition is null))
         {
             return exact;
         }
 
-        var definition = serviceType.GetGenericTypeDefinition();
-        return services.Where(descriptor => !descriptor.IsKeyedService && descriptor.ServiceType == definition).ToList();
+        return services.Where(descriptor => descriptor.IsKeyedService == isKeyed &&
+            (!isKeyed || Equals(descriptor.ServiceKey, serviceKey)) &&
+            (descriptor.ServiceType == definition || (isEnumerable && descriptor.ServiceType == serviceType))).ToList();
     }
 
     private static InvalidOperationException UnknowableDependency(Type handlerType, Type dependencyType)

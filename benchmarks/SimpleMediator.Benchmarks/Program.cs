@@ -5,7 +5,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator;
 using SimpleMediator.Interfaces;
 
-BenchmarkRunner.Run<MediatorBenchmarks>(DefaultConfig.Instance.WithArtifactsPath("BenchmarkDotNet.Artifacts"));
+BenchmarkSwitcher.FromAssembly(typeof(MediatorBenchmarks).Assembly)
+    .Run(args, DefaultConfig.Instance.WithArtifactsPath("BenchmarkDotNet.Artifacts"));
 
 // Every mediator is resolved from a scope, which is the only supported usage. The baseline is an
 // ASYNC handler resolved and called through DI, so the comparison isolates mediator dispatch
@@ -134,4 +135,79 @@ public sealed class CountingBehaviorThree : IPipelineBehavior<PingRequest, int>
 
     public Task<int> Handle(PingRequest request, RequestHandlerDelegate<int> next, CancellationToken cancellationToken)
         => next(cancellationToken);
+}
+
+[MemoryDiagnoser]
+public class SourceGeneratorBatchBenchmarks
+{
+    private const int CallCount = 50;
+
+    private ServiceProvider _reflectionProvider = null!;
+    private ServiceProvider _generatedProvider = null!;
+    private IServiceScope _reflectionScope = null!;
+    private IServiceScope _generatedScope = null!;
+    private ISender _reflectionSender = null!;
+    private ISender _generatedSender = null!;
+    private BulkPingRequest _request = null!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        var reflectionServices = new ServiceCollection();
+        reflectionServices.AddSimpleMediator(options =>
+            options.RegisterAssembly(typeof(BulkPingHandler).Assembly));
+        _reflectionProvider = reflectionServices.BuildServiceProvider();
+        _reflectionScope = _reflectionProvider.CreateScope();
+        _reflectionSender = _reflectionScope.ServiceProvider.GetRequiredService<ISender>();
+
+        var generatedServices = new ServiceCollection();
+        generatedServices.AddSimpleMediatorGenerated(options =>
+            options.RegisterAssembly(typeof(BulkPingHandler).Assembly));
+        _generatedProvider = generatedServices.BuildServiceProvider();
+        _generatedScope = _generatedProvider.CreateScope();
+        _generatedSender = _generatedScope.ServiceProvider.GetRequiredService<ISender>();
+
+        _request = new BulkPingRequest(42);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _reflectionScope.Dispose();
+        _generatedScope.Dispose();
+        _reflectionProvider.Dispose();
+        _generatedProvider.Dispose();
+    }
+
+    [Benchmark(Baseline = true, OperationsPerInvoke = CallCount)]
+    public async Task<int> Reflection_50Sends()
+    {
+        var total = 0;
+        for (var i = 0; i < CallCount; i++)
+        {
+            total += await _reflectionSender.Send(_request);
+        }
+
+        return total;
+    }
+
+    [Benchmark(OperationsPerInvoke = CallCount)]
+    public async Task<int> SourceGenerated_50Sends()
+    {
+        var total = 0;
+        for (var i = 0; i < CallCount; i++)
+        {
+            total += await _generatedSender.Send(_request);
+        }
+
+        return total;
+    }
+}
+
+public sealed record BulkPingRequest(int Value) : IRequest<int>;
+
+public sealed class BulkPingHandler : IRequestHandler<BulkPingRequest, int>
+{
+    public Task<int> Handle(BulkPingRequest request, CancellationToken cancellationToken)
+        => Task.FromResult(request.Value + 1);
 }

@@ -319,27 +319,28 @@ Native-compatible handlers are registered as ordinary open-generic DI services. 
 > | `Scoped` (the default) | one per DI scope | the current scope | the scope |
 > | `Singleton` | one per application | **the root provider** | the root provider |
 >
-> Only the *resolution plan* (the closed type plus its factory) is cached, never the instance, so
-> scoped dependencies stay correct across requests.
+> The bounded resolution-plan cache stores closed types and factories, not handler instances.
+> Scoped and singleton handler instances live in their respective lifetime stores, keyed by closed
+> implementation and request/response types; evicting a plan never recreates a live instance.
 >
 > The `Singleton` row is the subtle one. A singleton custom-mapped handler is built once and reused
 > forever, so it must not be built from a request scope: it would capture that scope's `DbContext`
 > and keep handing out an instance whose scope was already disposed. SimpleMediator therefore builds
 > singleton custom handlers from the **root** provider, and — because "the root scope's `DbContext`
 > shared for the whole process" is almost never what an application wants — it **rejects** a singleton
-> custom-mapped handler whose constructor takes a `Scoped` or `Transient` dependency:
+> custom-mapped handler whose registered constructor dependency graph contains a `Scoped` or
+> `Transient` dependency:
 >
 > ```
-> Open-generic request handler 'MyHandler<T>' is registered as a Singleton, but its constructor
-> depends on 'AppDbContext', which is registered as Scoped. ... Use ServiceLifetime.Scoped
-> (or Transient) for this handler, or register a closed handler instead.
+> Open-generic request handler 'MyHandler<T>' is registered as a Singleton, but its
+> dependency graph includes 'AppDbContext', which is registered as Scoped. ...
 > ```
 >
 > This check runs on every `AddSimpleMediator` call, not only under `ValidateOnBuild`. It reads
 > lifetimes the way Microsoft DI resolves them:
 >
-> - a single dependency uses its **last** non-keyed registration; an `IEnumerable<T>` dependency is
->   rejected if **any** registration of `T` is `Scoped` or `Transient`;
+> - a single dependency uses its **last** registration (matching its key, if any); an
+>   `IEnumerable<T>` dependency is rejected if **any** matching registration is `Scoped` or `Transient`;
 > - a dependency closed over the handler's own type parameter (for example
 >   `Handler<T>(IRepo<T> repo)` or `ILogger<Handler<T>>`) is checked against its open-generic
 >   registration (`IRepo<>`, `ILogger<>`); with no open-generic registration its lifetime is
@@ -347,8 +348,10 @@ Native-compatible handlers are registered as ordinary open-generic DI services. 
 > - the constructor marked `[ActivatorUtilitiesConstructor]` is checked, otherwise every public
 >   constructor.
 >
-> Only direct constructor dependencies are checked. Enable the host's `ValidateScopes` to catch a
-> scoped service reached indirectly.
+> The check recursively follows registered implementation types, including keyed dependencies.
+> Factory registrations and dependencies resolved dynamically through `IServiceProvider` cannot be
+> inspected at registration time. Enable the host's `ValidateScopes` (and `ValidateOnBuild`) to
+> catch scope violations in those cases.
 >
 > Handler decoration is not supported by the single-handler resolver; use `IPipelineBehavior<,>` for
 > cross-cutting concerns.
@@ -527,7 +530,13 @@ Repeatable microbenchmarks are provided in `benchmarks/SimpleMediator.Benchmarks
 dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks -- --filter '*MediatorBenchmarks*'
 ```
 
-The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. Both the mediator and the baseline handler are resolved from a scope, and the baseline handler is `async`, so the comparison isolates mediator dispatch overhead instead of measuring a completed task against a state machine. `MediatorSend_WithBehaviors` measures the cost of a three-behavior chain. BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
+The suite measures request dispatch against a direct handler call and compares sequential and parallel notification publication. Both the mediator and the baseline handler are resolved from a scope, and the baseline handler is `async`, so the comparison isolates mediator dispatch overhead instead of measuring a completed task against a state machine. `MediatorSend_WithBehaviors` measures the cost of a three-behavior chain. `SourceGeneratorBatchBenchmarks` compares reflection and source-generated dispatch across 50 sequential sends of the same request in each benchmark invocation; the handler completes synchronously so async scheduling does not dominate the measurement. Its results are normalized per send (`OperationsPerInvoke=50`), and the generated mode is warmed like the reflection mode, so this measures steady-state dispatch rather than startup or first-use wrapper creation. Run just this comparison with:
+
+```bash
+dotnet run -c Release -f net10.0 --project benchmarks/SimpleMediator.Benchmarks -- --filter '*SourceGeneratorBatchBenchmarks*'
+```
+
+BenchmarkDotNet reports runtime, operating system, CPU, throughput, and memory allocation; use its generated reports when comparing changes. Run on an otherwise idle machine and compare results only across matching hardware and runtime configurations. Use `net8.0` instead of `net10.0` to benchmark that target framework. For a quick harness check (not performance comparisons), append `--job Dry`.
 
 ## AOT & Trimming
 

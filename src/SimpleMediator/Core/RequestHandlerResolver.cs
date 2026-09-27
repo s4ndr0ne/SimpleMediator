@@ -67,7 +67,7 @@ internal static class RequestHandlerResolver
             {
                 var store = serviceProvider.GetRequiredService<OpenGenericSingletonLifetimeStore>();
                 openGenericHandler = store.GetOrAdd(
-                    (match.RequestType, match.ResponseType, match.Factory),
+                    (match.ImplementationType, match.RequestType, match.ResponseType),
                     () => match.Factory(store.RootProvider, arguments: null));
                 break;
             }
@@ -76,7 +76,7 @@ internal static class RequestHandlerResolver
             {
                 var store = serviceProvider.GetRequiredService<OpenGenericScopedLifetimeStore>();
                 openGenericHandler = store.GetOrAdd(
-                    (match.RequestType, match.ResponseType, match.Factory),
+                    (match.ImplementationType, match.RequestType, match.ResponseType),
                     () => match.Factory(serviceProvider, arguments: null));
                 break;
             }

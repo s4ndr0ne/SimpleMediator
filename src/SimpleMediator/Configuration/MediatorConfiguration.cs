@@ -157,6 +157,7 @@ internal sealed class MediatorConfiguration
             {
                 factories ??= new List<OpenGenericHandlerFactory>(1);
                 factories.Add(new OpenGenericHandlerFactory(
+                    closedImplementation!,
                     ActivatorUtilities.CreateFactory(closedImplementation!, Type.EmptyTypes),
                     registration.Lifetime,
                     requestType,
