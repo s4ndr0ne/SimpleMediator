@@ -434,7 +434,7 @@ Basic structural validation runs during **every** `AddSimpleMediator` call, with
 
 - open-generic mappings that Microsoft DI cannot close, and scanned open-generic request handlers with no inferable mapping;
 - concrete handler/behavior implementations that are abstract, non-public-constructor, or not activatable by DI;
-- a `Singleton` custom-mapped open-generic handler with a `Scoped` or `Transient` direct constructor dependency (see [Lifetimes of custom-mapped open-generic handlers](#open-generic-request-handlers));
+- a `Singleton` custom-mapped open-generic handler whose registered constructor dependency graph contains a `Scoped` or `Transient` service (including keyed dependencies; see [Lifetimes of custom-mapped open-generic handlers](#open-generic-request-handlers));
 - `RequireScopedMediator` set to conflicting values by different `AddSimpleMediator` calls;
 - a behavior registered twice for the same request/response pair with conflicting lifetimes.
 
@@ -443,7 +443,7 @@ Basic structural validation runs during **every** `AddSimpleMediator` call, with
 - multiple registrations for the same closed `IRequestHandler<,>` (whether by type, factory, or instance);
 - a closed request handler that is *also* matched by a scanned SimpleMediator open-generic handler or by a native DI open-generic `IRequestHandler<,>` registration.
 
-Conflict validation can only see request types that have a closed registration; it cannot predict every request type an application may send. For the complete constructor dependency graph, also enable the host provider's `ValidateOnBuild` and `ValidateScopes`.
+Conflict validation can only see request types that have a closed registration; it cannot predict every request type an application may send. The singleton check recursively inspects registered implementation types for custom-mapped open-generic handlers, but cannot inspect factory registrations or dependencies resolved dynamically through `IServiceProvider`. Enable the host provider's `ValidateOnBuild` and `ValidateScopes` as additional safeguards for the rest of the application's service graph.
 
 > **Recommended for production:** set `options.ValidateOnBuild = true`. Without it, a duplicate handler or
 > an ambiguity surfaces as a `RequestHandlerResolutionException` on the *first request* that hits it
