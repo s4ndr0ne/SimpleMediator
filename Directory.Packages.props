@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageVersion Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <!-- netstandard2.0 only: IAsyncDisposable and ValueTask for the public surface. -->
     <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
