@@ -7,7 +7,7 @@ namespace SimpleMediator.Interfaces;
 /// <typeparam name="TResponse">The type of response produced by the handler.</typeparam>
 /// <remarks>
 /// Handlers resolved from the dependency injection container share the lifetime configured at registration
-/// (typically <see cref="Microsoft.Extensions.DependencyInjection.ServiceLifetime.Transient"/>). If a handler
+/// (by default, <see cref="Microsoft.Extensions.DependencyInjection.ServiceLifetime.Scoped"/>). If a handler
 /// implements <see cref="System.IDisposable"/> or <see cref="System.IAsyncDisposable"/> and is resolved from the container,
 /// its disposal is tracked and executed when the ambient <see cref="Microsoft.Extensions.DependencyInjection.IServiceScope"/>
 /// is disposed. For operations executing multiple requests, use a per-request scope (e.g. via <c>CreateMediatorScope()</c>)

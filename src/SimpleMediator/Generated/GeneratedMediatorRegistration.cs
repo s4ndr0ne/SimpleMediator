@@ -109,7 +109,10 @@ public static class GeneratedMediatorRegistration
     private static void ValidateSingleRequestHandler(IServiceCollection services)
     {
         var duplicate = services
-            .Where(descriptor => OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
+            // Generated dispatch uses the ordinary (non-keyed) service lookup, so keyed
+            // handlers do not participate in duplicate detection.
+            .Where(descriptor => !descriptor.IsKeyedService &&
+                                 OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
             .GroupBy(descriptor => descriptor.ServiceType)
             .FirstOrDefault(group => group.Count() > 1);
 

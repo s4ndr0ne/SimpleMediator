@@ -75,13 +75,17 @@ services.AddSimpleMediator(options =>
     // Scan for request, notification, pre/post, and exception handlers.
     options.RegisterAssembly(typeof(Program).Assembly);
     // Register pipeline behaviors explicitly with AddBehavior.
-
-    // Optionally change the default lifetime (default is Scoped)
-    options.DefaultLifetime = ServiceLifetime.Scoped;
 });
 
 var serviceProvider = services.BuildServiceProvider();
 ```
+
+Handlers discovered by `RegisterAssembly` and behaviors registered with `AddBehavior` use the
+**Scoped** lifetime by default. Set `options.DefaultLifetime` to `Transient` or `Singleton` to
+change the lifetime used for those registrations. This setting does not change manually registered
+services or the mediator interfaces (`IMediator`, `ISender`, and `IPublisher`), which are transient.
+Custom-mapped open-generic request handlers follow `DefaultLifetime` too; their activation and
+disposal rules are described in [Open-generic request handlers](#open-generic-request-handlers).
 
 ### 2. Resolve the mediator from a scope (not from the root)
 

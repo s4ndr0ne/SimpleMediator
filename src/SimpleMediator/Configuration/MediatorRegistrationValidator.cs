@@ -19,7 +19,10 @@ internal static class MediatorRegistrationValidator
     internal static void Validate(IServiceCollection services)
     {
         var requestHandlerGroups = services
-            .Where(descriptor => OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
+            // Mediator dispatch uses the ordinary (non-keyed) service lookup. Keyed handlers are
+            // separate registrations and cannot make that lookup ambiguous.
+            .Where(descriptor => !descriptor.IsKeyedService &&
+                                 OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
             .GroupBy(descriptor => descriptor.ServiceType)
             .ToList();
 
@@ -260,7 +263,8 @@ internal static class MediatorRegistrationValidator
         IEnumerable<IGrouping<Type, ServiceDescriptor>> requestHandlerGroups)
     {
         var nativeOpenGenericHandlers = services
-            .Where(descriptor => descriptor.ServiceType == typeof(IRequestHandler<,>)
+            .Where(descriptor => !descriptor.IsKeyedService &&
+                                 descriptor.ServiceType == typeof(IRequestHandler<,>)
                                  && descriptor.ImplementationType is { IsGenericTypeDefinition: true })
             .Select(descriptor => descriptor.ImplementationType!)
             .ToArray();
@@ -285,7 +289,8 @@ internal static class MediatorRegistrationValidator
     {
         foreach (var descriptor in services)
         {
-            if (descriptor.ImplementationType is not { IsGenericTypeDefinition: true } implementationType ||
+            if (descriptor.IsKeyedService ||
+                descriptor.ImplementationType is not { IsGenericTypeDefinition: true } implementationType ||
                 !descriptor.ServiceType.IsGenericType)
             {
                 continue;
@@ -348,7 +353,8 @@ internal static class MediatorRegistrationValidator
     {
         foreach (var descriptor in services)
         {
-            if (descriptor.ImplementationType is not { } implementationType ||
+            if (descriptor.IsKeyedService ||
+                descriptor.ImplementationType is not { } implementationType ||
                 implementationType.ContainsGenericParameters ||
                 !descriptor.ServiceType.IsGenericType ||
                 !OpenGenericRegistrationRules.IsSupportedOpenGenericService(descriptor.ServiceType.GetGenericTypeDefinition()))

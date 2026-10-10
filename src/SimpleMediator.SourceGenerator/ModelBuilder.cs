@@ -24,6 +24,11 @@ internal sealed class ModelBuilder
     // Scanned assemblies in discovery order (current assembly first) with the expression that loads them.
     private readonly Dictionary<IAssemblySymbol, string> _assemblies = new(SymbolEqualityComparer.Default);
     private readonly List<IAssemblySymbol> _assemblyOrder = [];
+    // The current assembly is always scanned for message types, but handler diagnostics should only
+    // describe assemblies selected by RegisterAssembly. Arbitrary runtime filters cannot be
+    // evaluated here, so duplicate diagnostics only use unfiltered registrations.
+    private readonly HashSet<IAssemblySymbol> _registeredAssemblies = new(SymbolEqualityComparer.Default);
+    private readonly HashSet<IAssemblySymbol> _assembliesWithFilters = new(SymbolEqualityComparer.Default);
 
     private readonly Dictionary<string, (INamedTypeSymbol Request, ITypeSymbol Response)> _requests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, INamedTypeSymbol> _notifications = new(StringComparer.Ordinal);
@@ -127,9 +132,13 @@ internal sealed class ModelBuilder
                 break;
 
             case "RegisterAssembly" when KnownSymbols.Equal(method.ContainingType, _known.Options) && firstArgument is not null:
-                if (!TryAddRegisteredAssembly(semanticModel, firstArgument))
+                if (!TryAddRegisteredAssembly(semanticModel, firstArgument, out var registeredAssembly))
                 {
                     _diagnostics.Add(Diagnostic.Create(Diagnostics.AssemblyNotResolvable, firstArgument.GetLocation()));
+                }
+                else if (registeredAssembly is not null && HasNonNullAssemblyFilter(semanticModel, invocation, method))
+                {
+                    _assembliesWithFilters.Add(registeredAssembly);
                 }
 
                 break;
@@ -168,13 +177,20 @@ internal sealed class ModelBuilder
            (KnownSymbols.Equal(containingType, contract) ||
             containingType.AllInterfaces.Any(implemented => KnownSymbols.Equal(implemented, contract)));
 
-    private bool TryAddRegisteredAssembly(SemanticModel semanticModel, ExpressionSyntax argument)
+    private bool TryAddRegisteredAssembly(
+        SemanticModel semanticModel,
+        ExpressionSyntax argument,
+        out IAssemblySymbol? registeredAssembly)
     {
+        registeredAssembly = null;
+
         // Assembly.GetExecutingAssembly() is the assembly being compiled.
         if (argument is InvocationExpressionSyntax call &&
             semanticModel.GetSymbolInfo(call, _cancellationToken).Symbol is IMethodSymbol { Name: "GetExecutingAssembly" } getExecuting &&
             KnownSymbols.Equal(getExecuting.ContainingType, _known.Assembly))
         {
+            registeredAssembly = _compilation.Assembly;
+            _registeredAssemblies.Add(registeredAssembly);
             return true;
         }
 
@@ -206,11 +222,15 @@ internal sealed class ModelBuilder
 
         if (KnownSymbols.Equal(assembly, _compilation.Assembly))
         {
+            registeredAssembly = assembly;
+            _registeredAssemblies.Add(assembly);
             return true;
         }
 
         if (_assemblies.ContainsKey(assembly))
         {
+            registeredAssembly = assembly;
+            _registeredAssemblies.Add(assembly);
             return true;
         }
 
@@ -221,7 +241,39 @@ internal sealed class ModelBuilder
         }
 
         AddAssembly(assembly, "typeof(" + anchorExpression + ").Assembly");
+        registeredAssembly = assembly;
+        _registeredAssemblies.Add(assembly);
         return true;
+    }
+
+    private bool HasNonNullAssemblyFilter(
+        SemanticModel semanticModel,
+        InvocationExpressionSyntax invocation,
+        IMethodSymbol method)
+    {
+        var filterParameter = method.Parameters.FirstOrDefault(parameter => parameter.Name == "filter");
+        if (filterParameter is null)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < invocation.ArgumentList.Arguments.Count; index++)
+        {
+            var argument = invocation.ArgumentList.Arguments[index];
+            var parameterOrdinal = argument.NameColon is { } nameColon
+                ? method.Parameters.FirstOrDefault(parameter => parameter.Name == nameColon.Name.Identifier.ValueText)?.Ordinal ?? -1
+                : index;
+
+            if (parameterOrdinal != filterParameter.Ordinal)
+            {
+                continue;
+            }
+
+            var constant = semanticModel.GetConstantValue(argument.Expression, _cancellationToken);
+            return !(constant.HasValue && constant.Value is null);
+        }
+
+        return false;
     }
 
     // The type named at the call site may be inaccessible from the generated class (for example a
@@ -277,7 +329,7 @@ internal sealed class ModelBuilder
             var isHandler = type.AllInterfaces.Any(implemented => _known.IsHandlerInterface(implemented.OriginalDefinition));
             var isBehavior = type.AllInterfaces.Any(implemented => KnownSymbols.Equal(implemented.OriginalDefinition, _known.PipelineBehavior));
 
-            if (isHandler && IsAccessible(type, report: true))
+            if (isHandler && IsAccessible(type, report: _registeredAssemblies.Contains(assembly)))
             {
                 handlerTypes.Add(type);
 
@@ -336,7 +388,7 @@ internal sealed class ModelBuilder
     private List<Registration> BuildHandlers()
     {
         var registrations = new List<Registration>();
-        var requestHandlers = new Dictionary<string, (INamedTypeSymbol Service, List<(string Implementation, Location? Location)> Implementations)>(StringComparer.Ordinal);
+        var requestHandlers = new Dictionary<string, (INamedTypeSymbol Service, List<(string Implementation, Location? Location, IAssemblySymbol Assembly)> Implementations)>(StringComparer.Ordinal);
 
         foreach (var assembly in _assemblyOrder)
         {
@@ -358,7 +410,8 @@ internal sealed class ModelBuilder
                     closedRegistrations.AddRange(CloseOverMessages(type, implemented));
                 }
 
-                if (type.IsGenericType && closedRegistrations.Count == 0)
+                if (type.IsGenericType && closedRegistrations.Count == 0 &&
+                    _registeredAssemblies.Contains(type.ContainingAssembly!))
                 {
                     ReportUnused(type);
                 }
@@ -384,24 +437,34 @@ internal sealed class ModelBuilder
 
                         if (!implementations.Any(existing => existing.Implementation == renderedImplementation))
                         {
-                            implementations.Add((renderedImplementation, type.Locations.FirstOrDefault(location => location.IsInSource)));
+                            implementations.Add((renderedImplementation,
+                                type.Locations.FirstOrDefault(location => location.IsInSource),
+                                type.ContainingAssembly!));
                         }
                     }
                 }
             }
         }
 
-        foreach (var (service, implementations) in requestHandlers
-                     .Where(pair => pair.Value.Implementations.Count > 1)
+        foreach (var entry in requestHandlers
                      .OrderBy(pair => pair.Key, StringComparer.Ordinal)
                      .Select(pair => pair.Value))
         {
+            var reportableImplementations = entry.Implementations
+                .Where(implementation => _registeredAssemblies.Contains(implementation.Assembly) &&
+                                         !_assembliesWithFilters.Contains(implementation.Assembly))
+                .ToList();
+            if (reportableImplementations.Count < 2)
+            {
+                continue;
+            }
+
             _diagnostics.Add(Diagnostic.Create(
                 Diagnostics.DuplicateRequestHandler,
-                implementations.Select(entry => entry.Location).FirstOrDefault(location => location is not null) ?? Location.None,
-                service.TypeArguments[0].ToDisplayString(),
-                service.TypeArguments[1].ToDisplayString(),
-                string.Join(", ", implementations.Select(entry => entry.Implementation))));
+                reportableImplementations.Select(implementation => implementation.Location).FirstOrDefault(location => location is not null) ?? Location.None,
+                entry.Service.TypeArguments[0].ToDisplayString(),
+                entry.Service.TypeArguments[1].ToDisplayString(),
+                string.Join(", ", reportableImplementations.Select(implementation => implementation.Implementation))));
         }
 
         return registrations;

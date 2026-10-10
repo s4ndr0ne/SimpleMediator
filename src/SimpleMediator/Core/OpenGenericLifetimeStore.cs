@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Infrastructure;
 
@@ -47,17 +48,35 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
             _instances.Clear();
         }
 
+        List<Exception>? disposalExceptions = null;
         foreach (var instance in instances)
         {
-            switch (instance)
+            try
             {
-                case IAsyncDisposable asyncDisposable:
-                    await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-                    break;
-                case IDisposable disposable:
-                    disposable.Dispose();
-                    break;
+                switch (instance)
+                {
+                    case IAsyncDisposable asyncDisposable:
+                        await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+                        break;
+                    case IDisposable disposable:
+                        disposable.Dispose();
+                        break;
+                }
             }
+            catch (Exception exception)
+            {
+                (disposalExceptions ??= new List<Exception>()).Add(exception);
+            }
+        }
+
+        if (disposalExceptions is { Count: 1 })
+        {
+            ExceptionDispatchInfo.Capture(disposalExceptions[0]).Throw();
+        }
+
+        if (disposalExceptions is { Count: > 1 })
+        {
+            throw new AggregateException("One or more open-generic request handlers failed during disposal.", disposalExceptions);
         }
     }
 }
