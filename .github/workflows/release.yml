@@ -7,8 +7,8 @@ on:
       - 'v*'
 
 env:
-  # Packing the solution creates runtime, source-generator, and outbox packages at one version;
-  # symbol packages are included for the runtime and source generator.
+  # Packing the solution creates runtime, source-generator, and outbox packages at one version,
+  # with matching symbol packages.
   SOLUTION_PATH: SimpleMediator.sln
   
 jobs:
@@ -70,7 +70,7 @@ jobs:
               exit 1
             fi
           done
-          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator; do
+          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator s4ndr0ne.SimpleMediator.Outbox; do
             file="./artifacts/$package.$expected.snupkg"
             if [[ ! -f "$file" ]]; then
               echo "Missing symbols package $file."

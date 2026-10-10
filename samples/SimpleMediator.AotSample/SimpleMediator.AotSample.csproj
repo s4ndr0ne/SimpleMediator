@@ -22,7 +22,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="..\SimpleMediator.Console\*.cs" Exclude="..\SimpleMediator.Console\Program.cs" LinkBase="ConsoleSample" />
+    <!-- OutboxDemo.cs is excluded: it needs SimpleMediator.Outbox + Hosting and uses
+         System.Text.Json reflection, which is out of scope for the mediator AOT smoke test. -->
+    <Compile Include="..\SimpleMediator.Console\*.cs" Exclude="..\SimpleMediator.Console\Program.cs;..\SimpleMediator.Console\OutboxDemo.cs" LinkBase="ConsoleSample" />
   </ItemGroup>
 
   <ItemGroup>

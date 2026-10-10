@@ -12,7 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - The outbox dispatcher claims one message at a time so later messages do not lose their leases while waiting behind a slow notification handler.
-- Repeated `AddSimpleMediatorOutbox` calls now apply their configuration to the shared options instance; retry tests compare timestamps captured at failure time instead of test completion time.
+- Repeated `AddSimpleMediatorOutbox` calls now compose through the Options pattern instead of mutating a shared instance; invalid dispatcher options surface as `OptionsValidationException` on resolution; retry tests compare timestamps captured at failure time instead of test completion time.
 
 ## [4.1.0] - 2026-09-26
 

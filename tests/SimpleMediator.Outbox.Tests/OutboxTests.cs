@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using SimpleMediator.Interfaces;
 using SimpleMediator.Outbox;
 
@@ -42,6 +43,16 @@ public sealed class OutboxTests
         Assert.Equal(TimeSpan.FromMilliseconds(25), options.PollingInterval);
         Assert.Equal(TimeSpan.FromSeconds(10), options.RetryDelay);
         Assert.Single(provider.GetServices<IHostedService>());
+    }
+
+    [Fact]
+    public void AddSimpleMediatorOutbox_rejects_invalid_options_on_resolution()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediatorOutbox(options => options.BatchSize = 0);
+        using var provider = services.BuildServiceProvider();
+
+        Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<OutboxOptions>());
     }
 
     [Fact]

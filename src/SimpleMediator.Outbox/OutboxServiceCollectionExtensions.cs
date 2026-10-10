@@ -12,7 +12,7 @@ public static class OutboxServiceCollectionExtensions
     /// <see cref="IOutboxSerializer"/> implementations, and must call <c>AddSimpleMediator</c> separately.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="configure">Optional dispatcher configuration.</param>
+    /// <param name="configure">Optional dispatcher configuration. May be supplied by repeated calls; each delegate runs in registration order.</param>
     /// <returns>The same service collection.</returns>
     public static IServiceCollection AddSimpleMediatorOutbox(
         this IServiceCollection services,
@@ -20,23 +20,27 @@ public static class OutboxServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        var options = services
-            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(OutboxOptions))?
-            .ImplementationInstance as OutboxOptions;
-
-        if (options is null)
+        var builder = services.AddOptions<OutboxOptions>();
+        if (configure is not null)
         {
-            options = new OutboxOptions();
-            configure?.Invoke(options);
-            options.Validate();
-            services.TryAddSingleton(options);
-        }
-        else
-        {
-            configure?.Invoke(options);
-            options.Validate();
+            builder.Configure(configure);
         }
 
+        builder.Validate(
+            static options => options.BatchSize > 0,
+            "BatchSize must be greater than zero.");
+        builder.Validate(
+            static options => options.PollingInterval > TimeSpan.Zero,
+            "PollingInterval must be greater than zero.");
+        builder.Validate(
+            static options => options.LeaseDuration > TimeSpan.Zero,
+            "LeaseDuration must be greater than zero.");
+        builder.Validate(
+            static options => options.RetryDelay >= TimeSpan.Zero,
+            "RetryDelay cannot be negative.");
+
+        services.TryAddSingleton(static provider =>
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<OutboxOptions>>().Value);
         services.TryAddScoped<IOutboxPublisher, OutboxPublisher>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutboxDispatcherService>());
         return services;

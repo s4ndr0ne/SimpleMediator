@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Outbox;
@@ -9,16 +10,17 @@ namespace SimpleMediator.Outbox;
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812", Justification = "Created by the package's hosted-service registration.")]
 internal sealed class OutboxDispatcherService(
     IServiceScopeFactory scopeFactory,
-    OutboxOptions options,
+    IOptions<OutboxOptions> options,
     ILogger<OutboxDispatcherService>? logger = null) : BackgroundService
 {
+    private readonly OutboxOptions _options = options.Value;
     private readonly ILogger<OutboxDispatcherService> _logger = logger ?? NullLogger<OutboxDispatcherService>.Instance;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            for (var claimedCount = 0; claimedCount < options.BatchSize; claimedCount++)
+            for (var claimedCount = 0; claimedCount < _options.BatchSize; claimedCount++)
             {
                 IReadOnlyList<OutboxMessage> messages;
                 try
@@ -30,7 +32,7 @@ internal sealed class OutboxDispatcherService(
                         messages = await store.ClaimBatchAsync(
                             1,
                             DateTimeOffset.UtcNow,
-                            options.LeaseDuration,
+                            _options.LeaseDuration,
                             stoppingToken).ConfigureAwait(false);
                     }
                 }
@@ -41,13 +43,13 @@ internal sealed class OutboxDispatcherService(
                 catch (Exception exception)
                 {
                     OutboxLog.ClaimBatchFailed(_logger, exception);
-                    await Task.Delay(options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
                     break;
                 }
 
                 if (messages.Count == 0)
                 {
-                    await Task.Delay(options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                    await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
                     break;
                 }
 
@@ -88,7 +90,7 @@ internal sealed class OutboxDispatcherService(
                 {
                     await store.MarkFailedAsync(
                         message.Id,
-                        DateTimeOffset.UtcNow.Add(options.RetryDelay),
+                        DateTimeOffset.UtcNow.Add(_options.RetryDelay),
                         exception.ToString(),
                         CancellationToken.None).ConfigureAwait(false);
                 }

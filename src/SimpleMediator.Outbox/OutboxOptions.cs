@@ -14,27 +14,4 @@ public sealed class OutboxOptions
 
     /// <summary>Delay before retrying a message whose publication failed. Defaults to 10 seconds.</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(10);
-
-    internal void Validate()
-    {
-        if (BatchSize <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(BatchSize), "BatchSize must be greater than zero.");
-        }
-
-        if (PollingInterval <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(PollingInterval), "PollingInterval must be greater than zero.");
-        }
-
-        if (LeaseDuration <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(LeaseDuration), "LeaseDuration must be greater than zero.");
-        }
-
-        if (RetryDelay < TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(RetryDelay), "RetryDelay cannot be negative.");
-        }
-    }
 }
