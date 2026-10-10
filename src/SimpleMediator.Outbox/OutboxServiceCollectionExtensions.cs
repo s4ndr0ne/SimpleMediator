@@ -36,6 +36,10 @@ public static class OutboxServiceCollectionExtensions
             static options => options.LeaseDuration > TimeSpan.Zero,
             "LeaseDuration must be greater than zero.");
         builder.Validate(
+            static options => options.LeaseRenewalInterval > TimeSpan.Zero
+                && options.LeaseRenewalInterval < options.LeaseDuration,
+            "LeaseRenewalInterval must be greater than zero and less than LeaseDuration.");
+        builder.Validate(
             static options => options.RetryDelay >= TimeSpan.Zero,
             "RetryDelay cannot be negative.");
 

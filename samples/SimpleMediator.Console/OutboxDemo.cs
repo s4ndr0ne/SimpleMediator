@@ -87,7 +87,7 @@ public sealed class InMemoryOutboxStore : IOutboxStore
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<OutboxMessage>> ClaimBatchAsync(
+    public Task<IReadOnlyList<OutboxLease>> ClaimBatchAsync(
         int batchSize,
         DateTimeOffset nowUtc,
         TimeSpan leaseDuration,
@@ -103,51 +103,87 @@ public sealed class InMemoryOutboxStore : IOutboxStore
                 .Take(batchSize)
                 .ToArray();
 
-            foreach (var entry in entries)
+            var leases = entries.Select(entry =>
             {
+                entry.LeaseToken = Guid.NewGuid();
                 entry.LeaseUntilUtc = nowUtc.Add(leaseDuration);
+                return new OutboxLease(entry.Message, entry.LeaseToken.Value);
+            }).ToArray();
+            return Task.FromResult<IReadOnlyList<OutboxLease>>(leases);
+        }
+    }
+
+    public Task<bool> RenewLeaseAsync(
+        OutboxLease lease,
+        DateTimeOffset nowUtc,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default)
+    {
+        lock (_sync)
+        {
+            var entry = FindCurrentEntry(lease);
+            if (entry?.LeaseUntilUtc is not { } leaseUntilUtc || leaseUntilUtc <= nowUtc)
+            {
+                return Task.FromResult(false);
             }
 
-            IReadOnlyList<OutboxMessage> messages = entries.Select(entry => entry.Message).ToArray();
-            return Task.FromResult(messages);
+            entry.LeaseUntilUtc = nowUtc.Add(leaseDuration);
+            return Task.FromResult(true);
         }
     }
 
-    public Task MarkProcessedAsync(Guid messageId, DateTimeOffset processedAtUtc, CancellationToken cancellationToken = default)
+    public Task<bool> MarkProcessedAsync(OutboxLease lease, DateTimeOffset processedAtUtc, CancellationToken cancellationToken = default)
     {
         lock (_sync)
         {
-            var entry = GetEntry(messageId);
+            var entry = FindCurrentEntry(lease);
+            if (entry is null)
+            {
+                return Task.FromResult(false);
+            }
+
             entry.ProcessedAtUtc = processedAtUtc;
             entry.LeaseUntilUtc = null;
+            entry.LeaseToken = null;
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task MarkFailedAsync(Guid messageId, DateTimeOffset retryAtUtc, string error, CancellationToken cancellationToken = default)
+    public Task<bool> MarkFailedAsync(
+        OutboxLease lease,
+        DateTimeOffset retryAtUtc,
+        string error,
+        CancellationToken cancellationToken = default)
     {
         lock (_sync)
         {
-            var entry = GetEntry(messageId);
+            var entry = FindCurrentEntry(lease);
+            if (entry is null)
+            {
+                return Task.FromResult(false);
+            }
+
             entry.AvailableAtUtc = retryAtUtc;
             entry.LastError = error;
             entry.LeaseUntilUtc = null;
+            entry.LeaseToken = null;
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    private Entry GetEntry(Guid messageId)
-        => _entries.TryGetValue(messageId, out var entry)
+    private Entry? FindCurrentEntry(OutboxLease lease)
+        => _entries.TryGetValue(lease.Message.Id, out var entry) && entry.LeaseToken == lease.LeaseToken
             ? entry
-            : throw new KeyNotFoundException($"Outbox message '{messageId}' was not found.");
+            : null;
 
     private sealed class Entry(OutboxMessage message)
     {
         public OutboxMessage Message { get; } = message;
         public DateTimeOffset AvailableAtUtc { get; set; } = message.OccurredAtUtc;
         public DateTimeOffset? LeaseUntilUtc { get; set; }
+        public Guid? LeaseToken { get; set; }
         public DateTimeOffset? ProcessedAtUtc { get; set; }
         public string? LastError { get; set; }
     }

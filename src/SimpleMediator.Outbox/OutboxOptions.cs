@@ -13,6 +13,9 @@ public sealed class OutboxOptions
     /// <summary>Lease duration for claimed messages. Defaults to 1 minute.</summary>
     public TimeSpan LeaseDuration { get; set; } = TimeSpan.FromMinutes(1);
 
+    /// <summary>Interval between lease renewals while a message is being dispatched. Defaults to 20 seconds.</summary>
+    public TimeSpan LeaseRenewalInterval { get; set; } = TimeSpan.FromSeconds(20);
+
     /// <summary>Delay before retrying a message whose publication failed. Defaults to 10 seconds.</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(10);
 }

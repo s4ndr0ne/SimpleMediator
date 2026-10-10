@@ -300,11 +300,14 @@ Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync`
 `IPublisher.Publish`. The store's `EnqueueAsync` implementation must persist the outbox row in the
 same database transaction as the business changes. The worker claims up to `BatchSize` messages per
 polling cycle, one at a time immediately before dispatching each through `IPublisher` in its own DI
-scope, then marks it processed; failures are released for retry. Delivery is **at least once**, not
-exactly once: a process can fail after a handler ran but before the row was marked processed, so
-notification handlers should be idempotent. `ClaimBatchAsync`
-must lease rows atomically across worker instances and allow abandoned leases to expire. The store
-implementation owns persistence schema, attempt limits, and dead-letter policy.
+scope. While a handler runs, it renews the lease every `LeaseRenewalInterval` (20 seconds by default,
+less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**,
+not exactly once: a process can fail after a handler ran but before the row was marked processed, so
+notification handlers should be idempotent. `ClaimBatchAsync` must atomically lease rows across workers
+and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and
+`MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false`
+when the lease expired or another worker reclaimed the message. The store implementation owns
+persistence schema, attempt limits, and dead-letter policy.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.

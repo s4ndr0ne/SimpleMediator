@@ -159,25 +159,32 @@ public sealed class SmokeStore : IOutboxStore
         return Task.CompletedTask;
     }
 
-    public Task<IReadOnlyList<OutboxMessage>> ClaimBatchAsync(
+    public Task<IReadOnlyList<OutboxLease>> ClaimBatchAsync(
         int batchSize,
         DateTimeOffset nowUtc,
         TimeSpan leaseDuration,
         CancellationToken cancellationToken = default)
-        => Task.FromResult<IReadOnlyList<OutboxMessage>>(Array.Empty<OutboxMessage>());
+        => Task.FromResult<IReadOnlyList<OutboxLease>>(Array.Empty<OutboxLease>());
 
-    public Task MarkProcessedAsync(
-        Guid messageId,
+    public Task<bool> RenewLeaseAsync(
+        OutboxLease lease,
+        DateTimeOffset nowUtc,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    public Task<bool> MarkProcessedAsync(
+        OutboxLease lease,
         DateTimeOffset processedAtUtc,
         CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        => Task.FromResult(false);
 
-    public Task MarkFailedAsync(
-        Guid messageId,
+    public Task<bool> MarkFailedAsync(
+        OutboxLease lease,
         DateTimeOffset retryAtUtc,
         string error,
         CancellationToken cancellationToken = default)
-        => Task.CompletedTask;
+        => Task.FromResult(false);
 }
 EOF
 
