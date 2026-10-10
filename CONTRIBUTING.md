@@ -11,7 +11,8 @@ install the .NET 8 runtime.
 ```
 src/SimpleMediator/                 the runtime library (package s4ndr0ne.SimpleMediator)
 src/SimpleMediator.SourceGenerator/ Roslyn source generator for AOT (package s4ndr0ne.SimpleMediator.SourceGenerator)
-tests/SimpleMediator.*Tests/        unit, safety, integration and generator tests (xunit)
+src/SimpleMediator.Outbox/          provider-agnostic transactional outbox (package s4ndr0ne.SimpleMediator.Outbox)
+tests/SimpleMediator.*Tests/        unit, safety, integration, generator and outbox tests (xunit)
 samples/SimpleMediator.Console/     console demo
 samples/SimpleMediator.AotSample/   Native AOT smoke test (Console sources + AddSimpleMediatorGenerated; CI aot-smoke)
 benchmarks/                    BenchmarkDotNet suite

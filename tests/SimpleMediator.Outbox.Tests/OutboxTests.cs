@@ -29,6 +29,22 @@ public sealed class OutboxTests
     }
 
     [Fact]
+    public void AddSimpleMediatorOutbox_applies_options_from_repeated_registrations()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediatorOutbox(options => options.BatchSize = 8);
+        services.AddSimpleMediatorOutbox(options => options.PollingInterval = TimeSpan.FromMilliseconds(25));
+        using var provider = services.BuildServiceProvider();
+
+        var options = provider.GetRequiredService<OutboxOptions>();
+
+        Assert.Equal(8, options.BatchSize);
+        Assert.Equal(TimeSpan.FromMilliseconds(25), options.PollingInterval);
+        Assert.Equal(TimeSpan.FromSeconds(10), options.RetryDelay);
+        Assert.Single(provider.GetServices<IHostedService>());
+    }
+
+    [Fact]
     public async Task Worker_publishes_claimed_message_and_marks_it_processed()
     {
         var message = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "hello", DateTimeOffset.UtcNow);
@@ -50,6 +66,8 @@ public sealed class OutboxTests
 
         Assert.Equal(new SampleNotification("hello"), published);
         Assert.Equal(message.Id, processedId);
+        Assert.NotEmpty(store.RequestedBatchSizes);
+        Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(1, batchSize));
     }
 
     [Fact]
@@ -62,7 +80,11 @@ public sealed class OutboxTests
         services.AddSingleton<IOutboxStore>(store);
         services.AddSingleton<IOutboxSerializer, TestOutboxSerializer>();
         services.AddSingleton<IPublisher>(publisher);
-        services.AddSimpleMediatorOutbox(options => options.PollingInterval = TimeSpan.FromMilliseconds(5));
+        services.AddSimpleMediatorOutbox(options =>
+        {
+            options.PollingInterval = TimeSpan.FromMilliseconds(5);
+            options.RetryDelay = TimeSpan.FromHours(1);
+        });
         using var provider = services.BuildServiceProvider();
 
         var worker = provider.GetServices<IHostedService>().Single();
@@ -73,7 +95,7 @@ public sealed class OutboxTests
 
         Assert.Equal(message.Id, failed.MessageId);
         Assert.Contains("handler failed", failed.Error, StringComparison.Ordinal);
-        Assert.True(failed.RetryAtUtc > DateTimeOffset.UtcNow);
+        Assert.True(failed.RetryAtUtc > failed.FailedAtUtc);
     }
 
     private sealed record SampleNotification(string Value) : INotification;
@@ -97,8 +119,9 @@ public sealed class OutboxTests
         private int _claimed;
 
         public OutboxMessage? Enqueued { get; private set; }
+        public List<int> RequestedBatchSizes { get; } = [];
         public TaskCompletionSource<Guid> Processed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource<(Guid MessageId, DateTimeOffset RetryAtUtc, string Error)> Failed { get; }
+        public TaskCompletionSource<(Guid MessageId, DateTimeOffset RetryAtUtc, string Error, DateTimeOffset FailedAtUtc)> Failed { get; }
             = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken = default)
@@ -113,6 +136,7 @@ public sealed class OutboxTests
             TimeSpan leaseDuration,
             CancellationToken cancellationToken = default)
         {
+            RequestedBatchSizes.Add(batchSize);
             IReadOnlyList<OutboxMessage> result = pending is not null && Interlocked.Exchange(ref _claimed, 1) == 0
                 ? [pending]
                 : Array.Empty<OutboxMessage>();
@@ -127,7 +151,7 @@ public sealed class OutboxTests
 
         public Task MarkFailedAsync(Guid messageId, DateTimeOffset retryAtUtc, string error, CancellationToken cancellationToken = default)
         {
-            Failed.TrySetResult((messageId, retryAtUtc, error));
+            Failed.TrySetResult((messageId, retryAtUtc, error, DateTimeOffset.UtcNow));
             return Task.CompletedTask;
         }
     }

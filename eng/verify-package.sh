@@ -18,8 +18,13 @@ fi
 
 runtime_packages=("$package_directory"/s4ndr0ne.SimpleMediator.[0-9]*.nupkg)
 generator_packages=("$package_directory"/s4ndr0ne.SimpleMediator.SourceGenerator.[0-9]*.nupkg)
+outbox_packages=("$package_directory"/s4ndr0ne.SimpleMediator.Outbox.[0-9]*.nupkg)
 if [[ "${#runtime_packages[@]}" -eq 0 ]]; then
   echo "No s4ndr0ne.SimpleMediator package found in '$package_directory'." >&2
+  exit 1
+fi
+if [[ "${#outbox_packages[@]}" -eq 0 ]]; then
+  echo "No s4ndr0ne.SimpleMediator.Outbox package found in '$package_directory'." >&2
   exit 1
 fi
 
@@ -33,8 +38,10 @@ if [[ -z "$package_version" ]]; then
 fi
 
 consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-consumer.XXXXXX")"
+outbox_consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-outbox-consumer.XXXXXX")"
 generated_consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-generated-consumer.XXXXXX")"
-trap 'rm -rf "$consumer_directory" "$generated_consumer_directory"' EXIT
+trap 'rm -rf "$consumer_directory" "$outbox_consumer_directory" "$generated_consumer_directory"' EXIT
+export NUGET_PACKAGES="$outbox_consumer_directory/.nuget"
 
 echo "Verifying s4ndr0ne.SimpleMediator $package_version (reflection registration)..."
 
@@ -103,6 +110,79 @@ dotnet restore "$project_file" \
   --source "$package_directory" \
   --source https://api.nuget.org/v3/index.json >/dev/null
 dotnet run --project "$project_file" --no-restore --framework net10.0
+
+echo "Verifying s4ndr0ne.SimpleMediator.Outbox $package_version (enqueue registration)..."
+outbox_project_file="$outbox_consumer_directory/OutboxConsumer.csproj"
+dotnet new console --name OutboxConsumer --framework net10.0 --output "$outbox_consumer_directory" --no-restore >/dev/null
+dotnet add "$outbox_project_file" package Microsoft.Extensions.DependencyInjection --version 8.0.1 --no-restore >/dev/null
+dotnet add "$outbox_project_file" package s4ndr0ne.SimpleMediator.Outbox --version "$package_version" --source "$package_directory" --no-restore >/dev/null
+
+cat > "$outbox_consumer_directory/Program.cs" <<'EOF'
+using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Interfaces;
+using SimpleMediator.Outbox;
+
+var store = new SmokeStore();
+var services = new ServiceCollection();
+services.AddSingleton<IOutboxStore>(store);
+services.AddSingleton<IOutboxSerializer, SmokeSerializer>();
+services.AddSimpleMediatorOutbox();
+using var provider = services.BuildServiceProvider();
+await using var scope = provider.CreateAsyncScope();
+await scope.ServiceProvider.GetRequiredService<IOutboxPublisher>().EnqueueAsync(new SmokeNotification("package"));
+
+if (store.Enqueued is null || store.Enqueued.Type != "smoke")
+{
+    throw new InvalidOperationException("The outbox package did not persist the smoke notification.");
+}
+
+Console.WriteLine("outbox enqueued");
+
+public sealed record SmokeNotification(string Value) : INotification;
+
+public sealed class SmokeSerializer : IOutboxSerializer
+{
+    public OutboxMessage Serialize(INotification notification, Guid messageId, DateTimeOffset occurredAtUtc)
+        => new(messageId, "smoke", ((SmokeNotification)notification).Value, occurredAtUtc);
+
+    public IOutboxDispatchable Deserialize(OutboxMessage message)
+        => new OutboxDispatchable<SmokeNotification>(new SmokeNotification(message.Payload));
+}
+
+public sealed class SmokeStore : IOutboxStore
+{
+    public OutboxMessage? Enqueued { get; private set; }
+
+    public Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken = default)
+    {
+        Enqueued = message;
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<OutboxMessage>> ClaimBatchAsync(
+        int batchSize,
+        DateTimeOffset nowUtc,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult<IReadOnlyList<OutboxMessage>>(Array.Empty<OutboxMessage>());
+
+    public Task MarkProcessedAsync(
+        Guid messageId,
+        DateTimeOffset processedAtUtc,
+        CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
+    public Task MarkFailedAsync(
+        Guid messageId,
+        DateTimeOffset retryAtUtc,
+        string error,
+        CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+}
+EOF
+
+dotnet restore "$outbox_project_file" --source "$package_directory" --source https://api.nuget.org/v3/index.json >/dev/null
+dotnet run --project "$outbox_project_file" --no-restore --framework net10.0
 
 if [[ "${#generator_packages[@]}" -eq 0 ]]; then
   echo "No s4ndr0ne.SimpleMediator.SourceGenerator package found; skipping the generated-registration consumer."

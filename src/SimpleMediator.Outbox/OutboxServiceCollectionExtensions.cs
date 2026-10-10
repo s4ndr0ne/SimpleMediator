@@ -20,11 +20,23 @@ public static class OutboxServiceCollectionExtensions
     {
         ArgumentNullException.ThrowIfNull(services);
 
-        var options = new OutboxOptions();
-        configure?.Invoke(options);
-        options.Validate();
+        var options = services
+            .LastOrDefault(descriptor => descriptor.ServiceType == typeof(OutboxOptions))?
+            .ImplementationInstance as OutboxOptions;
 
-        services.TryAddSingleton(options);
+        if (options is null)
+        {
+            options = new OutboxOptions();
+            configure?.Invoke(options);
+            options.Validate();
+            services.TryAddSingleton(options);
+        }
+        else
+        {
+            configure?.Invoke(options);
+            options.Validate();
+        }
+
         services.TryAddScoped<IOutboxPublisher, OutboxPublisher>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutboxDispatcherService>());
         return services;
