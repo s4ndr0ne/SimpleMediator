@@ -20,44 +20,41 @@ internal sealed class OutboxDispatcherService(
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            for (var claimedCount = 0; claimedCount < _options.BatchSize; claimedCount++)
+            IReadOnlyList<OutboxMessage> messages;
+            try
             {
-                IReadOnlyList<OutboxMessage> messages;
-                try
+                var scope = scopeFactory.CreateAsyncScope();
+                await using (scope.ConfigureAwait(false))
                 {
-                    var scope = scopeFactory.CreateAsyncScope();
-                    await using (scope.ConfigureAwait(false))
-                    {
-                        var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
-                        messages = await store.ClaimBatchAsync(
-                            1,
-                            DateTimeOffset.UtcNow,
-                            _options.LeaseDuration,
-                            stoppingToken).ConfigureAwait(false);
-                    }
+                    var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+                    messages = await store.ClaimBatchAsync(
+                        _options.BatchSize,
+                        DateTimeOffset.UtcNow,
+                        _options.LeaseDuration,
+                        stoppingToken).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    return;
-                }
-                catch (Exception exception)
-                {
-                    OutboxLog.ClaimBatchFailed(_logger, exception);
-                    await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
-                    break;
-                }
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                OutboxLog.ClaimBatchFailed(_logger, exception);
+                await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                continue;
+            }
 
-                if (messages.Count == 0)
-                {
-                    await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
-                    break;
-                }
+            if (messages.Count == 0)
+            {
+                await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                continue;
+            }
 
-                foreach (var message in messages)
-                {
-                    stoppingToken.ThrowIfCancellationRequested();
-                    await DispatchAsync(message, stoppingToken).ConfigureAwait(false);
-                }
+            foreach (var message in messages)
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+                await DispatchAsync(message, stoppingToken).ConfigureAwait(false);
             }
         }
     }

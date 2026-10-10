@@ -78,7 +78,7 @@ public sealed class OutboxTests
         Assert.Equal(new SampleNotification("hello"), published);
         Assert.Equal(message.Id, processedId);
         Assert.NotEmpty(store.RequestedBatchSizes);
-        Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(1, batchSize));
+        Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(32, batchSize));
     }
 
     [Fact]
