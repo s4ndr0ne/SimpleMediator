@@ -3,7 +3,8 @@ namespace SimpleMediator.Outbox;
 /// <summary>Options for the hosted outbox dispatcher.</summary>
 public sealed class OutboxOptions
 {
-    /// <summary>Maximum number of messages claimed atomically per polling cycle. Defaults to 32.</summary>
+    /// <summary>Maximum messages dispatched per polling cycle. Each is claimed immediately before
+    /// dispatch. Defaults to 32.</summary>
     public int BatchSize { get; set; } = 32;
 
     /// <summary>Delay between polls when no messages are available or a poll fails. Defaults to 5 seconds.</summary>

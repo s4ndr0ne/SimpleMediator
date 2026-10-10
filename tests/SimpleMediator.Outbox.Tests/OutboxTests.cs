@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
@@ -78,7 +79,48 @@ public sealed class OutboxTests
         Assert.Equal(new SampleNotification("hello"), published);
         Assert.Equal(message.Id, processedId);
         Assert.NotEmpty(store.RequestedBatchSizes);
-        Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(32, batchSize));
+        Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(1, batchSize));
+    }
+
+    [Fact]
+    public async Task Concurrent_workers_claim_the_next_message_while_another_worker_is_dispatching()
+    {
+        var firstMessage = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "first", DateTimeOffset.UtcNow);
+        var secondMessage = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "second", DateTimeOffset.UtcNow);
+        var store = new ConcurrentOutboxStore([firstMessage, secondMessage]);
+        var publisher = new BlockingTestPublisher();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOutboxStore>(store);
+        services.AddSingleton<IOutboxSerializer, TestOutboxSerializer>();
+        services.AddSingleton<IPublisher>(publisher);
+        services.AddSimpleMediatorOutbox(options => options.PollingInterval = TimeSpan.FromMilliseconds(5));
+        using var firstProvider = services.BuildServiceProvider();
+        using var secondProvider = services.BuildServiceProvider();
+
+        var firstWorker = firstProvider.GetServices<IHostedService>().Single();
+        var secondWorker = secondProvider.GetServices<IHostedService>().Single();
+        await firstWorker.StartAsync(CancellationToken.None);
+
+        try
+        {
+            await publisher.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await secondWorker.StartAsync(CancellationToken.None);
+            var secondStarted = await publisher.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("second", secondStarted);
+
+            publisher.ReleaseFirst.TrySetResult();
+            await store.AllProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, store.ProcessedIds.Count);
+            Assert.Contains(firstMessage.Id, store.ProcessedIds);
+            Assert.Contains(secondMessage.Id, store.ProcessedIds);
+            Assert.All(store.RequestedBatchSizes, batchSize => Assert.Equal(1, batchSize));
+        }
+        finally
+        {
+            publisher.ReleaseFirst.TrySetResult();
+            await firstWorker.StopAsync(CancellationToken.None);
+            await secondWorker.StopAsync(CancellationToken.None);
+        }
     }
 
     [Fact]
@@ -123,6 +165,75 @@ public sealed class OutboxTests
 
         public IOutboxDispatchable Deserialize(OutboxMessage message)
             => new OutboxDispatchable<SampleNotification>(new SampleNotification(message.Payload));
+    }
+
+    private sealed class ConcurrentOutboxStore(IEnumerable<OutboxMessage> pending) : IOutboxStore
+    {
+        private readonly object _gate = new();
+        private readonly Queue<OutboxMessage> _pending = new(pending);
+        private int _processedCount;
+
+        public ConcurrentQueue<int> RequestedBatchSizes { get; } = new();
+        public ConcurrentQueue<Guid> ProcessedIds { get; } = new();
+        public TaskCompletionSource AllProcessed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task<IReadOnlyList<OutboxMessage>> ClaimBatchAsync(
+            int batchSize,
+            DateTimeOffset nowUtc,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            RequestedBatchSizes.Enqueue(batchSize);
+            lock (_gate)
+            {
+                var claimed = new List<OutboxMessage>(batchSize);
+                while (claimed.Count < batchSize && _pending.TryDequeue(out var message))
+                {
+                    claimed.Add(message);
+                }
+
+                return Task.FromResult<IReadOnlyList<OutboxMessage>>(claimed);
+            }
+        }
+
+        public Task MarkProcessedAsync(Guid messageId, DateTimeOffset processedAtUtc, CancellationToken cancellationToken = default)
+        {
+            ProcessedIds.Enqueue(messageId);
+            if (Interlocked.Increment(ref _processedCount) == 2)
+            {
+                AllProcessed.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task MarkFailedAsync(Guid messageId, DateTimeOffset retryAtUtc, string error, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+    }
+
+    private sealed class BlockingTestPublisher : IPublisher
+    {
+        public TaskCompletionSource<string> FirstStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string> SecondStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirst { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default)
+            where TNotification : INotification
+        {
+            var value = Assert.IsType<SampleNotification>(notification).Value;
+            if (value == "first")
+            {
+                FirstStarted.TrySetResult(value);
+                await ReleaseFirst.Task.WaitAsync(cancellationToken);
+            }
+            else
+            {
+                SecondStarted.TrySetResult(value);
+            }
+        }
     }
 
     private sealed class TestOutboxStore(OutboxMessage? pending = null) : IOutboxStore

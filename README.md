@@ -298,10 +298,11 @@ services.AddSimpleMediatorOutbox(options =>
 
 Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` instead of
 `IPublisher.Publish`. The store's `EnqueueAsync` implementation must persist the outbox row in the
-same database transaction as the business changes. The worker leases batches, publishes each
-notification through `IPublisher` in its own DI scope, then marks it processed; failures are released
-for retry. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but
-before the row was marked processed, so notification handlers should be idempotent. `ClaimBatchAsync`
+same database transaction as the business changes. The worker claims up to `BatchSize` messages per
+polling cycle, one at a time immediately before dispatching each through `IPublisher` in its own DI
+scope, then marks it processed; failures are released for retry. Delivery is **at least once**, not
+exactly once: a process can fail after a handler ran but before the row was marked processed, so
+notification handlers should be idempotent. `ClaimBatchAsync`
 must lease rows atomically across worker instances and allow abandoned leases to expire. The store
 implementation owns persistence schema, attempt limits, and dead-letter policy.
 
