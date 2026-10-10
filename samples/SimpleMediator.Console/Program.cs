@@ -1,11 +1,13 @@
 ﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using SimpleMediator;
 using SimpleMediator.Interfaces;
+using SimpleMediator.Outbox;
 using SimpleMediator.ConsoleSample;
 
-var services = new ServiceCollection();
+var builder = Host.CreateApplicationBuilder(args);
+var services = builder.Services;
 
-// Register SimpleMediator with options
 services.AddSimpleMediator(options =>
 {
     options.RegisterAssembly(typeof(Program).Assembly);
@@ -13,12 +15,18 @@ services.AddSimpleMediator(options =>
     options.DefaultLifetime = ServiceLifetime.Scoped;
 });
 
-var serviceProvider = services.BuildServiceProvider();
+// This in-memory store and serializer are for demonstration only. A production store must persist
+// messages in the same database transaction as the request's business changes.
+services.AddSingleton<IOutboxStore, InMemoryOutboxStore>();
+services.AddSingleton<IOutboxSerializer, SampleOutboxSerializer>();
+services.AddSingleton<OutboxDemoSignal>();
+services.AddSimpleMediatorOutbox(options => options.PollingInterval = TimeSpan.FromMilliseconds(50));
 
-// A mediator is always resolved from a scope. Resolving it from the root provider is rejected
-// (SimpleMediatorOptions.RequireScopedMediator), because a root-owned mediator would turn every
-// scoped dependency into a process-wide instance.
-using var scope = serviceProvider.CreateScope();
+using var host = builder.Build();
+await host.StartAsync();
+
+// Resolve the mediator from a scope so handlers and the outbox publisher share scoped services.
+await using var scope = host.Services.CreateAsyncScope();
 var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
 Console.WriteLine("--- Testing Request/Response ---");
@@ -48,4 +56,11 @@ Console.WriteLine("\n--- Testing Exception Handler ---");
 var recovered = await mediator.Send(new FaultyRequest("boom"));
 Console.WriteLine($"Faulty Response: {recovered}");
 
+Console.WriteLine("\n--- Testing Outbox (in-memory demo) ---");
+var outboxSignal = scope.ServiceProvider.GetRequiredService<OutboxDemoSignal>();
+var orderId = await mediator.Send(new CreateOrderRequest("Sample order"));
+Console.WriteLine($"Created order: {orderId}");
+await outboxSignal.Delivered.WaitAsync(TimeSpan.FromSeconds(5));
+
 Console.WriteLine("\nDone!");
+await host.StopAsync();

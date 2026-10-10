@@ -34,6 +34,11 @@ For trimming or Native AOT, install the source generator instead (it depends on 
 dotnet add package s4ndr0ne.SimpleMediator.SourceGenerator
 ```
 
+The optional provider-agnostic outbox contracts and hosted dispatcher are a separate package:
+```bash
+dotnet add package s4ndr0ne.SimpleMediator.Outbox
+```
+
 ## Supported DI container
 
 SimpleMediator supports **only Microsoft.Extensions.DependencyInjection** (the default container of
@@ -273,6 +278,32 @@ Registering the same behavior type for the same request/response pair **twice wi
 lifetimes** is reported as a configuration error rather than silently resolved. `TryAddEnumerable`
 keeps the first registration and discards the second, which would otherwise make the effective
 lifetime depend on module registration order.
+
+### Transactional Outbox (optional package)
+
+The separate `s4ndr0ne.SimpleMediator.Outbox` package provides provider-agnostic storage/serialization
+contracts, `IOutboxPublisher`, and a hosted dispatcher. It intentionally does not choose a database,
+serializer, or schema. Register your implementations and the package services:
+
+```csharp
+services.AddSimpleMediator(options => options.RegisterAssembly(typeof(Program).Assembly));
+services.AddScoped<IOutboxStore, MyOutboxStore>();
+services.AddSingleton<IOutboxSerializer, MyOutboxSerializer>();
+services.AddSimpleMediatorOutbox(options =>
+{
+    options.BatchSize = 32;
+    options.PollingInterval = TimeSpan.FromSeconds(5);
+});
+```
+
+Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` instead of
+`IPublisher.Publish`. The store's `EnqueueAsync` implementation must persist the outbox row in the
+same database transaction as the business changes. The worker leases batches, publishes each
+notification through `IPublisher` in its own DI scope, then marks it processed; failures are released
+for retry. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but
+before the row was marked processed, so notification handlers should be idempotent. `ClaimBatchAsync`
+must lease rows atomically across worker instances and allow abandoned leases to expire. The store
+implementation owns persistence schema, attempt limits, and dead-letter policy.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.

@@ -14,7 +14,7 @@
   </PropertyGroup>
 
   <!-- Shipped projects: the runtime library and its source generator. -->
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'SimpleMediator' Or '$(MSBuildProjectName)' == 'SimpleMediator.SourceGenerator'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'SimpleMediator' Or '$(MSBuildProjectName)' == 'SimpleMediator.SourceGenerator' Or '$(MSBuildProjectName)' == 'SimpleMediator.Outbox'">
     <IsPackable>true</IsPackable>
     <AnalysisMode>All</AnalysisMode>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

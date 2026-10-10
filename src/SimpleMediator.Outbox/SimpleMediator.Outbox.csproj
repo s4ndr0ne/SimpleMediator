@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <IsPackable>true</IsPackable>
+    <PackageId>s4ndr0ne.SimpleMediator.Outbox</PackageId>
+    <Description>Provider-agnostic transactional outbox contracts and hosted dispatcher for SimpleMediator.</Description>
+    <PackageTags>mediator, outbox, messaging, transactional-outbox</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SimpleMediator\SimpleMediator.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../../LICENSE" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)../../README.md" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)../../CHANGELOG.md" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+</Project>
