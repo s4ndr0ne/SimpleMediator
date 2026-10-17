@@ -563,6 +563,26 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
 
     public class NotABehavior { }
 
+    public class MutableOrderBehavior : IPipelineBehavior<OrderedRequest, string>
+    {
+        public MutableOrderBehavior(int order) => Order = order;
+
+        public int Order { get; set; }
+
+        public Task<string> Handle(OrderedRequest request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
+            => next(cancellationToken);
+    }
+
+    public class OtherCacheOrderBehavior : IPipelineBehavior<OrderedRequest, string>
+    {
+        public OtherCacheOrderBehavior(int order) => Order = order;
+
+        public int Order { get; }
+
+        public Task<string> Handle(OrderedRequest request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
+            => next(cancellationToken);
+    }
+
     // ---- Notifications with multiple handlers ----
 
     [Fact]
@@ -2080,6 +2100,126 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         }));
         Assert.Equal(1, successfulFactoryCalls);
         Assert.Equal(2, cache.TrackedKeyCount);
+    }
+
+    [Fact]
+    public void BoundedFactoryCache_EvictsTheLeastRecentlyUsedEntry()
+    {
+        var cache = new BoundedFactoryCache<int, string>(2);
+
+        Assert.Equal("first", cache.GetOrAdd(1, _ => "first"));
+        Assert.Equal("second", cache.GetOrAdd(2, _ => "second"));
+
+        // Hit entry 1 so it becomes the most recently used one. A throwing factory proves the
+        // cached value is served without invoking the factory again.
+        Assert.Equal("first", cache.GetOrAdd(1, _ => throw new InvalidOperationException("rebuild")));
+
+        // Inserting a third key must evict 2 (least recently used), not 1: under plain FIFO the
+        // oldest inserted entry — usually the most used one — was evicted first.
+        Assert.Equal("third", cache.GetOrAdd(3, _ => "third"));
+        Assert.Equal(2, cache.TrackedKeyCount);
+
+        Assert.Equal("first", cache.GetOrAdd(1, _ => throw new InvalidOperationException("hot entry evicted")));
+        Assert.Equal("third", cache.GetOrAdd(3, _ => throw new InvalidOperationException("fresh entry evicted")));
+
+        // 2 was the least recently used entry, so its factory runs again on the next access.
+        Assert.Equal("second-again", cache.GetOrAdd(2, _ => "second-again"));
+        Assert.Equal(2, cache.TrackedKeyCount);
+    }
+
+    [Fact]
+    public void BehaviorOrderCache_ReusesTheSortedOrderWhileThePipelineIsUnchanged()
+    {
+        var cache = new BehaviorOrderCache();
+        var behaviors = new IPipelineBehavior<OrderedRequest, string>[]
+        {
+            new MutableOrderBehavior(1),
+            new MutableOrderBehavior(10),
+        };
+
+        var first = cache.GetOrder(behaviors);
+        Assert.Equal([1, 0], first); // lower Order (index 0) becomes the outermost behavior
+
+        // Same types, same Order values: validated against the snapshot and reused as-is.
+        Assert.Same(first, cache.GetOrder(behaviors));
+
+        // New instances (a transient registration) with unchanged types and values: still reused.
+        var freshInstances = new IPipelineBehavior<OrderedRequest, string>[]
+        {
+            new MutableOrderBehavior(1),
+            new MutableOrderBehavior(10),
+        };
+        Assert.Same(first, cache.GetOrder(freshInstances));
+    }
+
+    [Fact]
+    public void BehaviorOrderCache_RecomputesWhenOrderValuesChange()
+    {
+        var cache = new BehaviorOrderCache();
+        var first = new MutableOrderBehavior(1);
+        var second = new MutableOrderBehavior(10);
+        var behaviors = new IPipelineBehavior<OrderedRequest, string>[] { first, second };
+
+        var before = cache.GetOrder(behaviors);
+        Assert.Equal([1, 0], before);
+
+        // Order may depend on scoped state (documented on IOrderedPipelineBehavior.Order): a
+        // changed value must be observed immediately instead of replaying the cached permutation.
+        second.Order = 0;
+
+        var after = cache.GetOrder(behaviors);
+        Assert.NotSame(before, after);
+        Assert.Equal([0, 1], after); // index 1 now carries Order 0 and becomes outermost
+    }
+
+    [Fact]
+    public void BehaviorOrderCache_RecomputesWhenTheTypeSequenceChanges()
+    {
+        var cache = new BehaviorOrderCache();
+        var before = cache.GetOrder(new IPipelineBehavior<OrderedRequest, string>[]
+        {
+            new MutableOrderBehavior(1),
+            new MutableOrderBehavior(10),
+        });
+
+        // Same count and Order values, but a different behavior type in the sequence: the
+        // permutation is tied to the registration shape and must not be inherited.
+        var after = cache.GetOrder(new IPipelineBehavior<OrderedRequest, string>[]
+        {
+            new OtherCacheOrderBehavior(10),
+            new MutableOrderBehavior(1),
+        });
+
+        Assert.NotSame(before, after);
+        Assert.Equal([0, 1], after);
+    }
+
+    [Fact]
+    public void BehaviorOrderCache_PreservesTheFifoTieBreakForEqualOrders()
+    {
+        var cache = new BehaviorOrderCache();
+        var behaviors = new IPipelineBehavior<OrderedRequest, string>[]
+        {
+            new MutableOrderBehavior(5),
+            new MutableOrderBehavior(5),
+        };
+
+        // Equal Order: reversed indices so the wrapping loop makes the first registered behavior
+        // (index 0) the outermost one — FIFO, matching the pipeline contract.
+        Assert.Equal([1, 0], cache.GetOrder(behaviors));
+    }
+
+    [Fact]
+    public void BehaviorOrderCache_SingleBehaviorNeedsNoComputation()
+    {
+        var cache = new BehaviorOrderCache();
+        var behaviors = new IPipelineBehavior<OrderedRequest, string>[] { new MutableOrderBehavior(42) };
+
+        var order = cache.GetOrder(behaviors);
+
+        Assert.Equal([0], order);
+        Assert.Same(order, cache.GetOrder(behaviors));
+        Assert.Same(order, new BehaviorOrderCache().GetOrder(behaviors));
     }
 
     [Fact]

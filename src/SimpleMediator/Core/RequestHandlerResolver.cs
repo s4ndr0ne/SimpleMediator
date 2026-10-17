@@ -13,18 +13,32 @@ internal static class RequestHandlerResolver
     {
         // Avoid materializing the DI result with ToList(). Requests normally have one
         // closed handler, so keeping only the first instance and a count saves a temporary
-        // List allocation while preserving the multiple-handler validation. This path covers
-        // closed handlers and native-compatible open-generic handlers registered in DI, so
-        // lifetime and disposal follow the container. Only custom-mapped open generics fall
+        // List allocation while preserving the multiple-handler validation. Microsoft DI
+        // materializes an array: indexing it directly avoids the boxed array enumerator that
+        // a foreach over the IEnumerable interface would allocate on every request. This path
+        // covers closed handlers and native-compatible open-generic handlers registered in DI,
+        // so lifetime and disposal follow the container. Only custom-mapped open generics fall
         // through to the factory path below.
         IRequestHandler<TRequest, TResponse>? closedHandler = null;
         var closedHandlerCount = 0;
-        foreach (var candidate in serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>())
+        var candidates = serviceProvider.GetServices<IRequestHandler<TRequest, TResponse>>();
+        if (candidates is IReadOnlyList<IRequestHandler<TRequest, TResponse>> candidateList)
         {
-            closedHandlerCount++;
-            if (closedHandlerCount == 1)
+            closedHandlerCount = candidateList.Count;
+            if (closedHandlerCount > 0)
             {
-                closedHandler = candidate;
+                closedHandler = candidateList[0];
+            }
+        }
+        else
+        {
+            foreach (var candidate in candidates)
+            {
+                closedHandlerCount++;
+                if (closedHandlerCount == 1)
+                {
+                    closedHandler = candidate;
+                }
             }
         }
 

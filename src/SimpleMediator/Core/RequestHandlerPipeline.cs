@@ -1,5 +1,6 @@
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Core;
@@ -11,20 +12,26 @@ internal static class RequestHandlerPipeline
     /// registered pipeline behaviors.
     /// </summary>
     /// <remarks>
-    /// This method does <em>not</em> catch exceptions. The caller
-    /// (<see cref="RequestHandlerWrapperImpl{TRequest, TResponse}"/>) owns the single try/catch so
-    /// that failures raised while <em>constructing</em> the handler, the pre/post handlers, or the
-    /// behaviors are routed to <see cref="IRequestExceptionHandler{TRequest, TResponse}"/> as well.
+    /// This method does <em>not</em> catch exceptions, and its fast paths add no async state
+    /// machine of their own: when there is nothing to sequence, the handler's own task is handed
+    /// back to the caller untouched, and a missing task throws synchronously. The caller
+    /// (<see cref="RequestHandlerWrapperImpl{TRequest, TResponse}"/>) owns the single try/catch
+    /// either way, so failures raised while <em>constructing</em> the handler, the pre/post
+    /// handlers, or the behaviors — and failures raised before the first await — are routed to
+    /// <see cref="IRequestExceptionHandler{TRequest, TResponse}"/> identically.
     /// </remarks>
-    public static async Task<TResponse> Execute<TRequest, TResponse>(
+    public static Task<TResponse> Execute<TRequest, TResponse>(
         TRequest request,
         IRequestHandler<TRequest, TResponse> handler,
         IEnumerable<IPreRequestHandler<TRequest, TResponse>> preHandlers,
         IEnumerable<IPostRequestHandler<TRequest, TResponse>> postHandlers,
         IEnumerable<IPipelineBehavior<TRequest, TResponse>> behaviors,
+        BehaviorOrderCache behaviorOrderCache,
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
+        // Avoid materializing the DI result with ToList(): Microsoft DI hands back arrays, which
+        // are already IReadOnlyList, so the cast costs nothing.
         var behaviorList = behaviors as IReadOnlyList<IPipelineBehavior<TRequest, TResponse>>
                            ?? behaviors.ToArray();
         var preList = preHandlers as IReadOnlyList<IPreRequestHandler<TRequest, TResponse>>
@@ -36,56 +43,129 @@ internal static class RequestHandlerPipeline
         {
             if (preList.Count == 0 && postList.Count == 0)
             {
-                return await Await(handler.Handle(request, cancellationToken), handler).ConfigureAwait(false);
+                // Nothing to sequence: return the handler's own task so this dispatch adds no
+                // Task and no async state machine. A null task throws synchronously; the
+                // wrapper's try block routes it to the exception handlers exactly like a
+                // faulted one, because a synchronous throw inside its try block is caught there.
+                return handler.Handle(request, cancellationToken)
+                       ?? throw NullTaskException(handler);
             }
 
-            foreach (var pre in preList)
-            {
-                await Await(pre.Handle(request, cancellationToken), pre).ConfigureAwait(false);
-            }
-
-            var directResult = await Await(handler.Handle(request, cancellationToken), handler).ConfigureAwait(false);
-
-            foreach (var post in postList)
-            {
-                await Await(post.Handle(request, directResult, cancellationToken), post).ConfigureAwait(false);
-            }
-
-            return directResult;
+            return ExecuteWithoutBehaviors(request, handler, preList, postList, cancellationToken);
         }
 
-        RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
+        return ExecuteWithBehaviors(
+            request,
+            handler,
+            preList,
+            postList,
+            behaviorList,
+            behaviorOrderCache.GetOrder(behaviorList),
+            cancellationToken);
+    }
+
+    private static async Task<TResponse> ExecuteWithoutBehaviors<TRequest, TResponse>(
+        TRequest request,
+        IRequestHandler<TRequest, TResponse> handler,
+        IReadOnlyList<IPreRequestHandler<TRequest, TResponse>> preHandlers,
+        IReadOnlyList<IPostRequestHandler<TRequest, TResponse>> postHandlers,
+        CancellationToken cancellationToken)
+        where TRequest : IRequest<TResponse>
+    {
+        foreach (var pre in preHandlers)
         {
-            foreach (var pre in preList)
+            var preTask = pre.Handle(request, cancellationToken);
+            if (preTask is null)
             {
-                await Await(pre.Handle(request, ct), pre).ConfigureAwait(false);
+                throw NullTaskException(pre);
             }
 
-            var result = await Await(handler.Handle(request, ct), handler).ConfigureAwait(false);
+            await preTask.ConfigureAwait(false);
+        }
 
-            foreach (var post in postList)
+        var handlerTask = handler.Handle(request, cancellationToken);
+        if (handlerTask is null)
+        {
+            throw NullTaskException(handler);
+        }
+
+        var result = await handlerTask.ConfigureAwait(false);
+
+        foreach (var post in postHandlers)
+        {
+            var postTask = post.Handle(request, result, cancellationToken);
+            if (postTask is null)
             {
-                await Await(post.Handle(request, result, ct), post).ConfigureAwait(false);
+                throw NullTaskException(post);
+            }
+
+            await postTask.ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private static Task<TResponse> ExecuteWithBehaviors<TRequest, TResponse>(
+        TRequest request,
+        IRequestHandler<TRequest, TResponse> handler,
+        IReadOnlyList<IPreRequestHandler<TRequest, TResponse>> preHandlers,
+        IReadOnlyList<IPostRequestHandler<TRequest, TResponse>> postHandlers,
+        IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors,
+        int[] behaviorOrder,
+        CancellationToken cancellationToken)
+        where TRequest : IRequest<TResponse>
+    {
+        RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
+        {
+            foreach (var pre in preHandlers)
+            {
+                var preTask = pre.Handle(request, ct);
+                if (preTask is null)
+                {
+                    throw NullTaskException(pre);
+                }
+
+                await preTask.ConfigureAwait(false);
+            }
+
+            var resultTask = handler.Handle(request, ct);
+            if (resultTask is null)
+            {
+                throw NullTaskException(handler);
+            }
+
+            var result = await resultTask.ConfigureAwait(false);
+
+            foreach (var post in postHandlers)
+            {
+                var postTask = post.Handle(request, result, ct);
+                if (postTask is null)
+                {
+                    throw NullTaskException(post);
+                }
+
+                await postTask.ConfigureAwait(false);
             }
 
             return result;
         };
 
-        var behaviorOrder = BuildBehaviorOrder(behaviorList);
-
         var aggregate = handlerDelegate;
         for (var index = 0; index < behaviorOrder.Length; index++)
         {
-            var behavior = behaviorList[behaviorOrder[index]];
+            var behavior = behaviors[behaviorOrder[index]];
             var next = aggregate;
             // Check each behavior's own result so a null Task is reported against the behavior
             // that actually returned it. Checking only the outermost result used to blame the
-            // innermost behavior. The throw is synchronous, so the caller's await surfaces it as
-            // an ordinary exception without an extra state machine per behavior.
+            // innermost behavior. The throw is synchronous, so it reaches the caller's try/catch
+            // whether it surfaces before or after the first await, without an extra state
+            // machine per behavior.
             aggregate = ct => behavior.Handle(request, next, ct) ?? throw NullTaskException(behavior);
         }
 
-        return await aggregate(cancellationToken).ConfigureAwait(false);
+        // Hand the chain's task back directly: the wrapper awaits it and owns the single
+        // try/catch, so this method needs no state machine to do the awaiting itself.
+        return aggregate(cancellationToken);
     }
 
     /// <summary>
@@ -100,12 +180,15 @@ internal static class RequestHandlerPipeline
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
-        IRequestExceptionHandler<TRequest, TResponse>[] exceptionHandlers;
+        IReadOnlyList<IRequestExceptionHandler<TRequest, TResponse>> exceptionHandlers;
         try
         {
-            exceptionHandlers = serviceProvider
-                .GetServices<IRequestExceptionHandler<TRequest, TResponse>>()
-                .ToArray();
+            var resolved = serviceProvider
+                .GetServices<IRequestExceptionHandler<TRequest, TResponse>>();
+            // Microsoft DI materializes an array, which is already IReadOnlyList; only copy when
+            // some other provider hands back a lazily evaluated sequence.
+            exceptionHandlers = resolved as IReadOnlyList<IRequestExceptionHandler<TRequest, TResponse>>
+                                ?? resolved.ToArray();
         }
         catch (Exception)
         {
@@ -116,7 +199,7 @@ internal static class RequestHandlerPipeline
             throw;
         }
 
-        if (exceptionHandlers.Length == 0)
+        if (exceptionHandlers.Count == 0)
         {
             ExceptionDispatchInfo.Capture(exception).Throw();
         }
@@ -129,8 +212,13 @@ internal static class RequestHandlerPipeline
             var exceptionHandler = exceptionHandlers[index];
             try
             {
-                await Await(exceptionHandler.Handle(request, exception, state, cancellationToken), exceptionHandler)
-                    .ConfigureAwait(false);
+                var handlerTask = exceptionHandler.Handle(request, exception, state, cancellationToken);
+                if (handlerTask is null)
+                {
+                    throw NullTaskException(exceptionHandler);
+                }
+
+                await handlerTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -159,78 +247,22 @@ internal static class RequestHandlerPipeline
         return default!;
     }
 
-    /// <summary>
-    /// Awaits a user-supplied <see cref="Task"/> and turns the "handler forgot to return a Task"
-    /// mistake into an actionable error instead of a bare <see cref="NullReferenceException"/>.
-    /// </summary>
-    private static async Task Await(Task? task, object source)
-    {
-        if (task is null)
-        {
-            throw NullTaskException(source);
-        }
-
-        await task.ConfigureAwait(false);
-    }
-
-    private static async Task<T> Await<T>(Task<T>? task, object source)
-    {
-        if (task is null)
-        {
-            throw NullTaskException(source);
-        }
-
-        return await task.ConfigureAwait(false);
-    }
-
     private static InvalidOperationException NullTaskException(object source)
         => new($"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
 
-    private static int[] BuildBehaviorOrder<TRequest, TResponse>(
-        IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
-        where TRequest : IRequest<TResponse>
-    {
-        var count = behaviors.Count;
-        if (count == 1)
-        {
-            return [0];
-        }
-
-        // Snapshot Order exactly once per request. Reading it inside the comparison would call the
-        // property O(n log n) times and, if the value is not stable, could make Array.Sort see an
-        // inconsistent ordering.
-        var orders = new int[count];
-        for (var i = 0; i < count; i++)
-        {
-            orders[i] = behaviors[i].Order;
-        }
-
-        var order = IdentityOrder(count);
-
-        Array.Sort(order, (a, b) =>
-        {
-            var cmp = orders[b].CompareTo(orders[a]);
-            // v4 contract: for equal Order the first registered behavior becomes the
-            // outermost one and runs first (FIFO, like MediatR / ASP.NET Core middleware).
-            // The wrapping loop consumes this list left to right, so reverse the tie
-            // order here to achieve FIFO execution.
-            return cmp != 0 ? cmp : b.CompareTo(a);
-        });
-
-        return order;
-    }
-
     private static int[] BuildExceptionHandlerOrder<TRequest, TResponse>(
-        IRequestExceptionHandler<TRequest, TResponse>[] handlers)
+        IReadOnlyList<IRequestExceptionHandler<TRequest, TResponse>> handlers)
         where TRequest : IRequest<TResponse>
     {
-        var count = handlers.Length;
+        var count = handlers.Count;
         if (count == 1)
         {
             return [0];
         }
 
-        // Snapshot once per resolution for the same reason as the behavior order above.
+        // Snapshot Order exactly once per resolution: reading it inside the comparison would call
+        // the property O(n log n) times and, if the value is not stable, could make Array.Sort see
+        // an inconsistent ordering.
         var orders = new int[count];
         for (var i = 0; i < count; i++)
         {

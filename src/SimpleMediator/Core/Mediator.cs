@@ -89,15 +89,21 @@ public class Mediator : IMediator
         _notificationWrapperFactory = configuration?.NotificationWrapperFactory ?? ReflectionWrapperFactory.Notification;
     }
 
+    // Send/Publish are deliberately not async pass-throughs: awaiting a nested call here, or
+    // awaiting the wrapper, would add one async state machine and one Task per dispatch purely
+    // to forward an already-existing task. Returning the task directly lets the caller's await
+    // observe completion, faults and cancellation exactly as before — only failures raised
+    // *synchronously* before any task exists (argument validation, wrapper construction) now
+    // surface as a synchronous throw instead of a faulted task; both reach `await` identically.
     /// <inheritdoc />
-    public async Task Send(IRequest request, CancellationToken cancellationToken = default)
+    public Task Send(IRequest request, CancellationToken cancellationToken = default)
     {
         ThrowHelper.ThrowIfNull(request);
-        await Send<Unit>(request, cancellationToken).ConfigureAwait(false);
+        return Send<Unit>(request, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
+    public Task<TResponse> Send<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
     {
         ThrowHelper.ThrowIfNull(request);
 
@@ -111,11 +117,11 @@ public class Mediator : IMediator
             (requestType, typeof(TResponse)),
             _requestWrapperFactory);
 
-        return await handler.Handle(request, _serviceProvider, cancellationToken).ConfigureAwait(false);
+        return handler.Handle(request, _serviceProvider, cancellationToken);
     }
 
     /// <inheritdoc />
-    public async Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
+    public Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default) where TNotification : INotification
     {
         ThrowHelper.ThrowIfNull(notification);
 
@@ -123,6 +129,6 @@ public class Mediator : IMediator
 
         var handler = (NotificationHandlerWrapper)_notificationHandlerWrappers.GetOrAdd(notificationType, _notificationWrapperFactory);
 
-        await handler.Handle(notification, _serviceProvider, cancellationToken).ConfigureAwait(false);
+        return handler.Handle(notification, _serviceProvider, cancellationToken);
     }
 }

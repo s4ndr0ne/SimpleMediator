@@ -34,9 +34,17 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         TNotification notification,
         CancellationToken cancellationToken)
     {
-        foreach (var handler in handlers)
+        // Microsoft DI hands back an array: index it directly so the loop does not go through
+        // the IEnumerable interface, whose GetEnumerator boxes the array's struct enumerator on
+        // every publish. Materialize any other shape once as the fallback.
+        if (handlers is not INotificationHandler<TNotification>[] handlerArray)
         {
-            await InvokeSafely(handler, notification, cancellationToken).ConfigureAwait(false);
+            handlerArray = handlers.ToArray();
+        }
+
+        for (var index = 0; index < handlerArray.Length; index++)
+        {
+            await InvokeSafely(handlerArray[index], notification, cancellationToken).ConfigureAwait(false);
         }
     }
 

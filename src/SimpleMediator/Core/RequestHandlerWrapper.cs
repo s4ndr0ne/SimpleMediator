@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Infrastructure;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.Core;
@@ -11,6 +12,13 @@ internal abstract class RequestHandlerWrapper<TResponse>
 internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrapper<TResponse>
     where TRequest : IRequest<TResponse>
 {
+    // The wrapper itself is cached per (request, response) pair on the container's configuration
+    // singleton, so this cache shares exactly the same lifetime and is never cross-container
+    // static state (the same reasoning as WrapperCache). It lets a dispatch whose behavior types
+    // and Order values are unchanged reuse the sorted order instead of re-allocating and
+    // re-sorting it every request; see BehaviorOrderCache for the validation contract.
+    private readonly BehaviorOrderCache _behaviorOrder = new();
+
     public override async Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
         var typedRequest = (TRequest)request;
@@ -35,6 +43,7 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
                 preHandlers,
                 postHandlers,
                 behaviors,
+                _behaviorOrder,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
