@@ -18,4 +18,17 @@ public sealed class OutboxOptions
 
     /// <summary>Delay before retrying a message whose publication failed. Defaults to 10 seconds.</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// When <see langword="false"/> (the default), the worker claims one message immediately before dispatching it,
+    /// up to <see cref="BatchSize"/> per cycle. When <see langword="true"/>, the worker claims up to <see cref="BatchSize"/>
+    /// messages in a single store call per cycle to minimize database round-trips.
+    /// </summary>
+    public bool ClaimFullBatch { get; set; }
+
+    /// <summary>
+    /// Maximum number of claimed messages dispatched concurrently within a batch when <see cref="ClaimFullBatch"/>
+    /// is enabled (or across concurrent claim slots). Defaults to 1 (sequential).
+    /// </summary>
+    public int MaxDegreeOfParallelism { get; set; } = 1;
 }

@@ -71,30 +71,18 @@ public static class GeneratedMediatorRegistration
             }
         }
 
+        // Behaviors stay opt-in and ordered exactly as with the reflection-based registration: the
+        // generator pre-closes every behavior it can see, and only the ones passed to AddBehavior,
+        // AddStreamBehavior, or AddNotificationBehavior are registered, in registration order.
+        RegisterGeneratedBehaviors(services, registry, options.Behaviors, options.DefaultLifetime, "AddBehavior");
+        RegisterGeneratedBehaviors(services, registry, options.StreamBehaviors, options.DefaultLifetime, "AddStreamBehavior");
+        RegisterGeneratedBehaviors(services, registry, options.NotificationBehaviors, options.DefaultLifetime, "AddNotificationBehavior");
+
         var configuration = ServiceCollectionExtensions.MergeConfiguration(
             services,
             options,
             new List<OpenGenericHandlerRegistration>(),
             registry);
-
-        // Behaviors stay opt-in and ordered exactly as with the reflection-based registration: the
-        // generator pre-closes every behavior it can see, and only the ones passed to AddBehavior are
-        // registered, in AddBehavior order.
-        foreach (var behaviorType in options.Behaviors)
-        {
-            if (!registry.Behaviors.TryGetValue(behaviorType, out var behaviors))
-            {
-                throw new InvalidOperationException(
-                    $"Pipeline behavior '{behaviorType.FullName}' is not known to the SimpleMediator source generator. " +
-                    "Declare it in the project that calls AddSimpleMediatorGenerated, or pass it to AddBehavior as a " +
-                    "typeof(...) literal so the generator can close it for every request at compile time.");
-            }
-
-            foreach (var behavior in behaviors)
-            {
-                ServiceCollectionExtensions.AddBehaviorDescriptor(services, behavior(options.DefaultLifetime));
-            }
-        }
 
         if (configuration.ValidationRequested)
         {
@@ -102,6 +90,30 @@ public static class GeneratedMediatorRegistration
         }
 
         return services;
+    }
+
+    private static void RegisterGeneratedBehaviors(
+        IServiceCollection services,
+        GeneratedMediatorRegistry registry,
+        List<Type> behaviorTypes,
+        ServiceLifetime lifetime,
+        string methodName)
+    {
+        foreach (var behaviorType in behaviorTypes)
+        {
+            if (!registry.Behaviors.TryGetValue(behaviorType, out var behaviors))
+            {
+                throw new InvalidOperationException(
+                    $"Pipeline behavior '{behaviorType.FullName}' is not known to the SimpleMediator source generator. " +
+                    $"Declare it in the project that calls AddSimpleMediatorGenerated, or pass it to {methodName} as a " +
+                    "typeof(...) literal so the generator can close it at compile time.");
+            }
+
+            foreach (var behavior in behaviors)
+            {
+                ServiceCollectionExtensions.AddBehaviorDescriptor(services, behavior(lifetime));
+            }
+        }
     }
 
     // The trim-safe subset of ValidateSimpleMediator: the generator already rejects duplicate handlers
@@ -112,7 +124,8 @@ public static class GeneratedMediatorRegistration
             // Generated dispatch uses the ordinary (non-keyed) service lookup, so keyed
             // handlers do not participate in duplicate detection.
             .Where(descriptor => !descriptor.IsKeyedService &&
-                                 OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
+                                 (OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType) ||
+                                  OpenGenericRegistrationRules.IsClosedStreamRequestHandler(descriptor.ServiceType)))
             .GroupBy(descriptor => descriptor.ServiceType)
             .FirstOrDefault(group => group.Count() > 1);
 

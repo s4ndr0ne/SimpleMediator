@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -31,6 +32,7 @@ internal sealed class ModelBuilder
     private readonly HashSet<IAssemblySymbol> _assembliesWithFilters = new(SymbolEqualityComparer.Default);
 
     private readonly Dictionary<string, (INamedTypeSymbol Request, ITypeSymbol Response)> _requests = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (INamedTypeSymbol Request, ITypeSymbol Response)> _streamRequests = new(StringComparer.Ordinal);
     private readonly Dictionary<string, INamedTypeSymbol> _notifications = new(StringComparer.Ordinal);
     private readonly HashSet<INamedTypeSymbol> _reportedInaccessible = new(SymbolEqualityComparer.Default);
 
@@ -38,8 +40,10 @@ internal sealed class ModelBuilder
     private readonly Dictionary<IAssemblySymbol, List<INamedTypeSymbol>> _handlerTypes = new(SymbolEqualityComparer.Default);
     private readonly List<INamedTypeSymbol> _behaviorTypes = [];
     private readonly HashSet<INamedTypeSymbol> _behaviorSet = new(SymbolEqualityComparer.Default);
+    private readonly List<string> _chainedModuleCalls = [];
 
     private bool _usesGeneratedEntryPoint;
+    private string? _exportedModuleName;
 
     public ModelBuilder(Compilation compilation, KnownSymbols known, CancellationToken cancellationToken)
     {
@@ -51,6 +55,13 @@ internal sealed class ModelBuilder
     public RegistrationModel Build(ImmutableArray<InvocationExpressionSyntax> invocations)
     {
         AddAssembly(_compilation.Assembly, CurrentAssemblyExpression);
+
+        if (TryGetModuleName(_compilation.Assembly, out var exportedModuleName))
+        {
+            _exportedModuleName = exportedModuleName;
+            _usesGeneratedEntryPoint = true;
+            _registeredAssemblies.Add(_compilation.Assembly);
+        }
 
         var messageCandidates = new List<(ITypeSymbol Type, Location Location)>();
         foreach (var invocation in invocations)
@@ -88,6 +99,14 @@ internal sealed class ModelBuilder
             .ThenBy(pair => pair.Response, StringComparer.Ordinal)
             .ToList();
 
+        var streamRequests = _streamRequests.Values
+            .Where(pair => IsAccessible(pair.Request, report: true) && IsAccessible(pair.Response, report: false))
+            .Select(pair => (Request: Render(pair.Request), Response: Render(pair.Response)))
+            .Distinct()
+            .OrderBy(pair => pair.Request, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Response, StringComparer.Ordinal)
+            .ToList();
+
         var notifications = _notifications.Values
             .Where(notification => IsAccessible(notification, report: true))
             .Select(Render)
@@ -97,12 +116,54 @@ internal sealed class ModelBuilder
 
         return new RegistrationModel(
             _usesGeneratedEntryPoint,
+            _exportedModuleName,
+            _chainedModuleCalls,
             _assemblyOrder.Select(assembly => _assemblies[assembly]).ToList(),
             requests,
+            streamRequests,
             notifications,
             handlers,
             behaviors,
             _diagnostics);
+    }
+
+    private bool TryGetModuleName(IAssemblySymbol assembly, out string? moduleName)
+    {
+        foreach (var attribute in assembly.GetAttributes())
+        {
+            if (KnownSymbols.Equal(attribute.AttributeClass, _known.ModuleAttribute))
+            {
+                string? rawName = null;
+                if (attribute.ConstructorArguments.Length > 0 &&
+                    attribute.ConstructorArguments[0].Value is string arg &&
+                    !string.IsNullOrWhiteSpace(arg))
+                {
+                    rawName = arg;
+                }
+
+                moduleName = SanitizeIdentifier(rawName ?? assembly.Name);
+                return true;
+            }
+        }
+
+        moduleName = null;
+        return false;
+    }
+
+    private static string SanitizeIdentifier(string name)
+    {
+        var sb = new StringBuilder(name.Length);
+        foreach (var ch in name)
+        {
+            sb.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+        }
+
+        if (sb.Length == 0 || char.IsDigit(sb[0]))
+        {
+            sb.Insert(0, '_');
+        }
+
+        return sb.ToString();
     }
 
     private void AnalyzeInvocation(
@@ -143,7 +204,8 @@ internal sealed class ModelBuilder
 
                 break;
 
-            case "AddBehavior" when KnownSymbols.Equal(method.ContainingType, _known.Options) && firstArgument is not null:
+            case "AddBehavior" or "AddStreamBehavior" or "AddNotificationBehavior"
+                when KnownSymbols.Equal(method.ContainingType, _known.Options) && firstArgument is not null:
                 if (firstArgument is TypeOfExpressionSyntax typeOf &&
                     semanticModel.GetTypeInfo(typeOf.Type, _cancellationToken).Type is INamedTypeSymbol behavior)
                 {
@@ -162,6 +224,7 @@ internal sealed class ModelBuilder
                 break;
 
             case "Send" when IsMemberOf(method, _known.Sender) && firstArgument is not null:
+            case "CreateStream" when IsMemberOf(method, _known.Sender) && firstArgument is not null:
             case "Publish" when IsMemberOf(method, _known.Publisher) && firstArgument is not null:
                 if (semanticModel.GetTypeInfo(firstArgument, _cancellationToken).Type is { } messageType)
                 {
@@ -304,6 +367,46 @@ internal sealed class ModelBuilder
         var handlerTypes = new List<INamedTypeSymbol>();
         _handlerTypes[assembly] = handlerTypes;
 
+        // If a referenced assembly has [assembly: GenerateSimpleMediatorModule], its own generated
+        // SimpleMediatorGeneratedModule_{Name}.Populate method already registers its public AND internal
+        // handlers, messages, and assembly entry. Delegate to it instead of duplicating registrations here!
+        if (!KnownSymbols.Equal(assembly, _compilation.Assembly) &&
+            TryGetModuleName(assembly, out var referencedModuleName) &&
+            referencedModuleName is not null)
+        {
+            var call = "global::SimpleMediator.SimpleMediatorGeneratedModule_" + referencedModuleName + ".Populate";
+            if (!_chainedModuleCalls.Contains(call))
+            {
+                _chainedModuleCalls.Add(call);
+            }
+
+            // Still discover public messages from the module so open-generic handlers/behaviors in the
+            // host project can close over them.
+            foreach (var type in EnumerateTypes(assembly.GlobalNamespace))
+            {
+                _cancellationToken.ThrowIfCancellationRequested();
+                if (type.IsAbstract || type.IsStatic || type.IsImplicitlyDeclared || type.Name.StartsWith("<", StringComparison.Ordinal) ||
+                    HasGenericContainingType(type))
+                {
+                    continue;
+                }
+
+                if (type.TypeKind is TypeKind.Class or TypeKind.Struct && !type.IsGenericType)
+                {
+                    AddMessage(type);
+                }
+
+                if (type.TypeKind == TypeKind.Class &&
+                    type.AllInterfaces.Any(implemented => _known.IsBehaviorInterface(implemented.OriginalDefinition)) &&
+                    IsAccessible(type, report: false))
+                {
+                    AddBehaviorType(type);
+                }
+            }
+
+            return;
+        }
+
         foreach (var type in EnumerateTypes(assembly.GlobalNamespace))
         {
             _cancellationToken.ThrowIfCancellationRequested();
@@ -327,7 +430,7 @@ internal sealed class ModelBuilder
             }
 
             var isHandler = type.AllInterfaces.Any(implemented => _known.IsHandlerInterface(implemented.OriginalDefinition));
-            var isBehavior = type.AllInterfaces.Any(implemented => KnownSymbols.Equal(implemented.OriginalDefinition, _known.PipelineBehavior));
+            var isBehavior = type.AllInterfaces.Any(implemented => _known.IsBehaviorInterface(implemented.OriginalDefinition));
 
             if (isHandler && IsAccessible(type, report: _registeredAssemblies.Contains(assembly)))
             {
@@ -378,6 +481,15 @@ internal sealed class ModelBuilder
                     _requests.Add(key, (message, response));
                 }
             }
+            else if (KnownSymbols.Equal(implemented.OriginalDefinition, _known.StreamRequest))
+            {
+                var response = implemented.TypeArguments[0];
+                var key = Render(message) + "|" + Render(response);
+                if (!_streamRequests.ContainsKey(key))
+                {
+                    _streamRequests.Add(key, (message, response));
+                }
+            }
             else if (KnownSymbols.Equal(implemented, _known.Notification))
             {
                 _notifications[Render(message)] = message;
@@ -425,7 +537,8 @@ internal sealed class ModelBuilder
                     var renderedImplementation = Render(implementation);
                     registrations.Add(new Registration(renderedService, renderedImplementation, key));
 
-                    if (KnownSymbols.Equal(service.OriginalDefinition, _known.RequestHandler))
+                    if (KnownSymbols.Equal(service.OriginalDefinition, _known.RequestHandler) ||
+                        KnownSymbols.Equal(service.OriginalDefinition, _known.StreamRequestHandler))
                     {
                         if (!requestHandlers.TryGetValue(renderedService, out var entry))
                         {
@@ -479,7 +592,7 @@ internal sealed class ModelBuilder
             var key = RenderTypeOfOperand(behavior);
             var closedRegistrations = new List<(INamedTypeSymbol Service, INamedTypeSymbol Implementation)>();
 
-            foreach (var implemented in behavior.AllInterfaces.Where(i => KnownSymbols.Equal(i.OriginalDefinition, _known.PipelineBehavior)))
+            foreach (var implemented in behavior.AllInterfaces.Where(i => _known.IsBehaviorInterface(i.OriginalDefinition)))
             {
                 if (!IsOpenDefinition(behavior))
                 {
@@ -525,9 +638,19 @@ internal sealed class ModelBuilder
         INamedTypeSymbol pattern)
     {
         var patternDefinition = pattern.OriginalDefinition;
-        var targets = _known.IsRequestShapedInterface(patternDefinition)
-            ? _requests.Values.Select(request => new[] { (ITypeSymbol)request.Request, request.Response })
-            : _notifications.Values.Select(notification => new[] { (ITypeSymbol)notification });
+        IEnumerable<ITypeSymbol[]> targets;
+        if (_known.IsRequestShapedInterface(patternDefinition))
+        {
+            targets = _requests.Values.Select(request => new[] { (ITypeSymbol)request.Request, request.Response });
+        }
+        else if (_known.IsStreamRequestShapedInterface(patternDefinition))
+        {
+            targets = _streamRequests.Values.Select(request => new[] { (ITypeSymbol)request.Request, request.Response });
+        }
+        else
+        {
+            targets = _notifications.Values.Select(notification => new[] { (ITypeSymbol)notification });
+        }
 
         foreach (var arguments in targets)
         {

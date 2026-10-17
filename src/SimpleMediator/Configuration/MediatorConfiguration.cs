@@ -2,12 +2,13 @@ using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Core;
 using SimpleMediator.Infrastructure;
+using SimpleMediator.Interfaces;
 using SimpleMediator;
 
 namespace SimpleMediator.Configuration;
 
 /// <summary>
-/// Immutable runtime configuration resolved by the mediator core from DI.
+/// Runtime configuration resolved by the mediator core from DI.
 /// Registered as a singleton by <c>AddSimpleMediator</c>.
 /// </summary>
 internal sealed class MediatorConfiguration
@@ -17,6 +18,7 @@ internal sealed class MediatorConfiguration
     public NotificationPublishStrategy NotificationPublishStrategy { get; }
     public int ResolutionCacheCapacity { get; }
     public bool ValidationRequested { get; private set; }
+    public bool EnableTelemetry { get; }
 
     /// <summary>
     /// When <c>true</c> (the default) the mediator refuses to be resolved from the root service
@@ -42,16 +44,22 @@ internal sealed class MediatorConfiguration
     // request/response pair — never the handler instance, so scoped dependencies stay correct.
     private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _resolutionCache;
     internal readonly WrapperCache<(Type Request, Type Response)> RequestHandlerWrappers = new();
+    internal readonly WrapperCache<(Type Request, Type Response)> StreamRequestHandlerWrappers = new();
     internal readonly WrapperCache<Type> NotificationHandlerWrappers = new();
 
     /// <summary>
-    /// Dispatch wrappers emitted by the source generator, keyed by (request, response) type.
+    /// Dispatch wrapper factories emitted by the source generator, keyed by (request, response) type.
     /// <c>null</c> when only the reflection-based registration was used.
     /// </summary>
-    public IReadOnlyDictionary<(Type Request, Type Response), object>? GeneratedRequestWrappers { get; }
+    public IReadOnlyDictionary<(Type Request, Type Response), Func<MediatorConfiguration?, object>>? GeneratedRequestWrappers { get; }
 
-    /// <summary>Source-generated notification wrappers, keyed by the concrete notification type.</summary>
-    public IReadOnlyDictionary<Type, object>? GeneratedNotificationWrappers { get; }
+    /// <summary>
+    /// Source-generated stream request wrapper factories, keyed by (request, response) type.
+    /// </summary>
+    public IReadOnlyDictionary<(Type Request, Type Response), Func<MediatorConfiguration?, object>>? GeneratedStreamRequestWrappers { get; }
+
+    /// <summary>Source-generated notification wrapper factories, keyed by the concrete notification type.</summary>
+    public IReadOnlyDictionary<Type, Func<MediatorConfiguration?, object>>? GeneratedNotificationWrappers { get; }
 
     /// <summary>
     /// Whether dispatch may fall back to building wrappers through reflection. <c>true</c> as soon as
@@ -63,6 +71,8 @@ internal sealed class MediatorConfiguration
 
     internal Func<(Type Request, Type Response), object> RequestWrapperFactory { get; }
 
+    internal Func<(Type Request, Type Response), object> StreamRequestWrapperFactory { get; }
+
     internal Func<Type, object> NotificationWrapperFactory { get; }
 
     public MediatorConfiguration(
@@ -72,9 +82,11 @@ internal sealed class MediatorConfiguration
         bool validationRequested = false,
         bool requireScopedMediator = true,
         bool requireScopedMediatorIsExplicit = false,
-        IReadOnlyDictionary<(Type Request, Type Response), object>? generatedRequestWrappers = null,
-        IReadOnlyDictionary<Type, object>? generatedNotificationWrappers = null,
-        bool allowsReflectionDispatch = true)
+        IReadOnlyDictionary<(Type Request, Type Response), Func<MediatorConfiguration?, object>>? generatedRequestWrappers = null,
+        IReadOnlyDictionary<(Type Request, Type Response), Func<MediatorConfiguration?, object>>? generatedStreamRequestWrappers = null,
+        IReadOnlyDictionary<Type, Func<MediatorConfiguration?, object>>? generatedNotificationWrappers = null,
+        bool allowsReflectionDispatch = true,
+        bool enableTelemetry = false)
     {
         ThrowHelper.ThrowIfNegativeOrZero(resolutionCacheCapacity);
         NotificationPublishStrategy = notificationPublishStrategy;
@@ -85,17 +97,20 @@ internal sealed class MediatorConfiguration
         CustomOpenGenericRequestHandlers = customOpenGenericRequestHandlers ?? NoRegistrations;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
         GeneratedRequestWrappers = generatedRequestWrappers;
+        GeneratedStreamRequestWrappers = generatedStreamRequestWrappers;
         GeneratedNotificationWrappers = generatedNotificationWrappers;
         AllowsReflectionDispatch = allowsReflectionDispatch;
+        EnableTelemetry = enableTelemetry;
         RequestWrapperFactory = CreateRequestWrapper;
+        StreamRequestWrapperFactory = CreateStreamRequestWrapper;
         NotificationWrapperFactory = CreateNotificationWrapper;
     }
 
     private object CreateRequestWrapper((Type Request, Type Response) key)
     {
-        if (GeneratedRequestWrappers is not null && GeneratedRequestWrappers.TryGetValue(key, out var wrapper))
+        if (GeneratedRequestWrappers is not null && GeneratedRequestWrappers.TryGetValue(key, out var factory))
         {
-            return wrapper;
+            return factory(this);
         }
 
         if (!AllowsReflectionDispatch)
@@ -108,14 +123,33 @@ internal sealed class MediatorConfiguration
                 "type in that project, or use the reflection-based AddSimpleMediator.");
         }
 
-        return ReflectionWrapperFactory.Request(key);
+        return ReflectionWrapperFactory.CreateRequestWrapper(key, this);
+    }
+
+    private object CreateStreamRequestWrapper((Type Request, Type Response) key)
+    {
+        if (GeneratedStreamRequestWrappers is not null && GeneratedStreamRequestWrappers.TryGetValue(key, out var factory))
+        {
+            return factory(this);
+        }
+
+        if (!AllowsReflectionDispatch)
+        {
+            throw new RequestHandlerResolutionException(
+                $"No source-generated dispatch exists for stream request '{key.Request.FullName}' with response '{key.Response.FullName}'. " +
+                "The SimpleMediator source generator registers every concrete stream request type declared in, handled in, or streamed from " +
+                "the project that calls AddSimpleMediatorGenerated; a stream request type that only exists at runtime cannot be discovered. " +
+                "Declare or stream the closed request type in that project, or use the reflection-based AddSimpleMediator.");
+        }
+
+        return ReflectionWrapperFactory.CreateStreamRequestWrapper(key, this);
     }
 
     private object CreateNotificationWrapper(Type notificationType)
     {
-        if (GeneratedNotificationWrappers is not null && GeneratedNotificationWrappers.TryGetValue(notificationType, out var wrapper))
+        if (GeneratedNotificationWrappers is not null && GeneratedNotificationWrappers.TryGetValue(notificationType, out var factory))
         {
-            return wrapper;
+            return factory(this);
         }
 
         if (!AllowsReflectionDispatch)
@@ -127,7 +161,7 @@ internal sealed class MediatorConfiguration
                 "project, or use the reflection-based AddSimpleMediator.");
         }
 
-        return ReflectionWrapperFactory.Notification(notificationType);
+        return ReflectionWrapperFactory.CreateNotificationWrapper(notificationType, this);
     }
 
     internal void RequestValidation() => ValidationRequested = true;

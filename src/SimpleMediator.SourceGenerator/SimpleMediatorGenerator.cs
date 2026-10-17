@@ -38,7 +38,7 @@ public sealed class SimpleMediatorGenerator : IIncrementalGenerator
 
     private static bool IsCandidate(InvocationExpressionSyntax invocation)
         => GetMethodName(invocation) is
-            "Send" or "Publish" or "AddBehavior" or "RegisterAssembly" or "AddSimpleMediatorGenerated";
+            "Send" or "CreateStream" or "Publish" or "AddBehavior" or "AddStreamBehavior" or "AddNotificationBehavior" or "RegisterAssembly" or "AddSimpleMediatorGenerated";
 
     internal static string? GetMethodName(InvocationExpressionSyntax invocation)
         => invocation.Expression switch

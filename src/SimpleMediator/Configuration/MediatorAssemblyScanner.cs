@@ -106,6 +106,7 @@ internal static class MediatorAssemblyScanner
 
         foreach (var implementedInterface in implementedInterfaces)
         {
+            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPostRequestHandler<,>), lifetime);

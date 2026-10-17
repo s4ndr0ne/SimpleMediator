@@ -84,6 +84,11 @@ internal static class Emitter
             Line(builder, "registry.AddRequest<" + request + ", " + response + ">();");
         }
 
+        foreach (var (streamRequest, response) in model.StreamRequests)
+        {
+            Line(builder, "registry.AddStreamRequest<" + streamRequest + ", " + response + ">();");
+        }
+
         foreach (var notification in model.Notifications)
         {
             Line(builder, "registry.AddNotification<" + notification + ">();");
@@ -99,8 +104,41 @@ internal static class Emitter
             Line(builder, "registry.AddBehavior<" + behavior.Service + ", " + behavior.Implementation + ">(typeof(" + behavior.Key + "));");
         }
 
+        foreach (var chainedCall in model.ChainedModuleCalls)
+        {
+            Line(builder, chainedCall + "(registry);");
+        }
+
         builder.AppendLine("        }");
         builder.AppendLine("    }");
+
+        if (model.ExportedModuleName is not null)
+        {
+            builder.AppendLine();
+            builder.Append("    ").AppendLine(GeneratedCodeAttribute);
+            builder.AppendLine("    [global::System.ComponentModel.EditorBrowsable(global::System.ComponentModel.EditorBrowsableState.Never)]");
+            builder.Append("    public static class SimpleMediatorGeneratedModule_").AppendLine(model.ExportedModuleName);
+            builder.AppendLine("    {");
+            builder.Append("        public static void Populate(").Append(Registry).AppendLine(" registry)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            if (registry == null)");
+            builder.AppendLine("            {");
+            builder.AppendLine("                throw new global::System.ArgumentNullException(nameof(registry));");
+            builder.AppendLine("            }");
+            builder.AppendLine();
+            builder.AppendLine("            SimpleMediatorGeneratedExtensions.PopulateModule(registry);");
+            builder.AppendLine("        }");
+            builder.AppendLine("    }");
+            builder.AppendLine();
+            builder.AppendLine("    internal static partial class SimpleMediatorGeneratedExtensions");
+            builder.AppendLine("    {");
+            builder.Append("        internal static void PopulateModule(").Append(Registry).AppendLine(" registry)");
+            builder.AppendLine("        {");
+            builder.AppendLine("            PopulateCore(registry);");
+            builder.AppendLine("        }");
+            builder.AppendLine("    }");
+        }
+
         builder.AppendLine("}");
         return builder.ToString();
     }

@@ -294,4 +294,123 @@ public sealed class GeneratorDriverTests
 
         Assert.Equal(Run(Source).Registrations, Run(Source).Registrations);
     }
+
+    [Fact]
+    public void Stream_requests_and_notification_behaviors_are_generated()
+    {
+        var result = Run("""
+            public static class Composition
+            {
+                public static void Compose(IServiceCollection services)
+                {
+                    services.AddSimpleMediatorGenerated(o =>
+                    {
+                        o.RegisterAssembly(typeof(Composition).Assembly);
+                        o.AddStreamBehavior(typeof(StreamLogBehavior<,>));
+                        o.AddNotificationBehavior(typeof(NoticeLogBehavior<>));
+                    });
+                }
+            }
+            public sealed class NumberStream : IStreamRequest<int> { }
+            public sealed class NumberStreamHandler : IStreamRequestHandler<NumberStream, int>
+            {
+                public async System.Collections.Generic.IAsyncEnumerable<int> Handle(NumberStream request, CancellationToken cancellationToken)
+                {
+                    await Task.Yield();
+                    yield return 42;
+                }
+            }
+            public sealed class StreamLogBehavior<TRequest, TResponse> : IStreamPipelineBehavior<TRequest, TResponse>
+                where TRequest : IStreamRequest<TResponse>
+            {
+                public System.Collections.Generic.IAsyncEnumerable<TResponse> Handle(TRequest request, StreamHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
+                    => next();
+            }
+            public sealed class Notice : INotification { }
+            public sealed class NoticeLogBehavior<TNotification> : INotificationBehavior<TNotification>
+                where TNotification : INotification
+            {
+                public Task Handle(TNotification notification, NotificationHandlerDelegate next, CancellationToken cancellationToken)
+                    => next(cancellationToken);
+            }
+            """);
+
+        Assert.Empty(result.CompilationErrors);
+        Assert.Empty(result.GeneratorDiagnostics);
+        Assert.Contains("registry.AddStreamRequest<global::NumberStream, int>();", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddHandler<global::SimpleMediator.Interfaces.IStreamRequestHandler<global::NumberStream, int>, global::NumberStreamHandler>", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddBehavior<global::SimpleMediator.Interfaces.IStreamPipelineBehavior<global::NumberStream, int>, global::StreamLogBehavior<global::NumberStream, int>>", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddBehavior<global::SimpleMediator.Interfaces.INotificationBehavior<global::Notice>, global::NoticeLogBehavior<global::Notice>>", result.Registrations, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GenerateSimpleMediatorModule_exports_public_module_populator_with_internal_handlers()
+    {
+        // Compile a referenced module assembly with [assembly: GenerateSimpleMediatorModule("Orders")]
+        // and an INTERNAL handler, then reference it from a host compilation!
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        var moduleSource = Usings + """
+            [assembly: GenerateSimpleMediatorModule("Orders")]
+            namespace OrdersModule
+            {
+                public sealed class CreateOrder : IRequest<int> { }
+                internal sealed class CreateOrderHandler : IRequestHandler<CreateOrder, int>
+                {
+                    public Task<int> Handle(CreateOrder request, CancellationToken cancellationToken) => Task.FromResult(99);
+                }
+            }
+            """;
+
+        var moduleCompilation = CSharpCompilation.Create(
+            "OrdersModuleAssembly",
+            [CSharpSyntaxTree.ParseText(moduleSource, parseOptions)],
+            References.Value,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        GeneratorDriver moduleDriver = CSharpGeneratorDriver.Create(
+            [new SimpleMediatorGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions);
+        moduleDriver = moduleDriver.RunGeneratorsAndUpdateCompilation(moduleCompilation, out var updatedModuleCompilation, out var moduleDiagnostics);
+
+        Assert.Empty(moduleDiagnostics);
+        Assert.Empty(updatedModuleCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        using var peStream = new MemoryStream();
+        var emitResult = updatedModuleCompilation.Emit(peStream);
+        Assert.True(emitResult.Success);
+        peStream.Position = 0;
+        var moduleReference = MetadataReference.CreateFromStream(peStream);
+
+        // Now compile the host project that references OrdersModuleAssembly and calls RegisterAssembly(typeof(CreateOrder).Assembly)
+        var hostSource = Usings + """
+            public static class HostComposition
+            {
+                public static void Compose(IServiceCollection services)
+                {
+                    services.AddSimpleMediatorGenerated(o => o.RegisterAssembly(typeof(OrdersModule.CreateOrder).Assembly));
+                }
+            }
+            """;
+
+        var hostCompilation = CSharpCompilation.Create(
+            "HostAssembly",
+            [CSharpSyntaxTree.ParseText(hostSource, parseOptions)],
+            References.Value.Add(moduleReference),
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        GeneratorDriver hostDriver = CSharpGeneratorDriver.Create(
+            [new SimpleMediatorGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions);
+        hostDriver = hostDriver.RunGeneratorsAndUpdateCompilation(hostCompilation, out var updatedHostCompilation, out var hostDiagnostics);
+
+        Assert.Empty(hostDiagnostics);
+        Assert.Empty(updatedHostCompilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+
+        var hostRegistrations = hostDriver.GetRunResult().Results
+            .SelectMany(r => r.GeneratedSources)
+            .First(g => g.HintName == SimpleMediatorGenerator.RegistrationsHintName)
+            .SourceText.ToString();
+
+        Assert.Contains("global::SimpleMediator.SimpleMediatorGeneratedModule_Orders.Populate(registry);", hostRegistrations, StringComparison.Ordinal);
+    }
 }

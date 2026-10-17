@@ -247,7 +247,7 @@ internal static class RequestHandlerPipeline
         return default!;
     }
 
-    private static InvalidOperationException NullTaskException(object source)
+    internal static InvalidOperationException NullTaskException(object source)
         => new($"'{source.GetType().FullName}' returned a null Task. Every mediator handler method must return a non-null Task.");
 
     private static int[] BuildExceptionHandlerOrder<TRequest, TResponse>(

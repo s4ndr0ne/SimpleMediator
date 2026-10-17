@@ -11,10 +11,14 @@ namespace SimpleMediator.Outbox;
 internal sealed class OutboxDispatcherService(
     IServiceScopeFactory scopeFactory,
     IOptions<OutboxOptions> options,
-    ILogger<OutboxDispatcherService>? logger = null) : BackgroundService
+    ILogger<OutboxDispatcherService>? logger = null,
+    TimeProvider? timeProvider = null,
+    IOutboxSignal? signal = null) : BackgroundService
 {
     private readonly OutboxOptions _options = options.Value;
     private readonly ILogger<OutboxDispatcherService> _logger = logger ?? NullLogger<OutboxDispatcherService>.Instance;
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly IOutboxSignal _signal = signal ?? new OutboxSignal();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -23,7 +27,7 @@ internal sealed class OutboxDispatcherService(
             var dispatchedAny = false;
             var claimFailed = false;
 
-            for (var dispatchedCount = 0; dispatchedCount < _options.BatchSize; dispatchedCount++)
+            if (_options.ClaimFullBatch)
             {
                 IReadOnlyList<OutboxLease> messages;
                 try
@@ -33,8 +37,8 @@ internal sealed class OutboxDispatcherService(
                     {
                         var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
                         messages = await store.ClaimBatchAsync(
-                            1,
-                            DateTimeOffset.UtcNow,
+                            _options.BatchSize,
+                            _timeProvider.GetUtcNow(),
                             _options.LeaseDuration,
                             stoppingToken).ConfigureAwait(false);
                     }
@@ -46,21 +50,53 @@ internal sealed class OutboxDispatcherService(
                 catch (Exception exception)
                 {
                     OutboxLog.ClaimBatchFailed(_logger, exception);
-                    await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
-                    claimFailed = true;
-                    break;
+                    await DelayOrWaitSignalAsync(stoppingToken).ConfigureAwait(false);
+                    continue;
                 }
 
-                if (messages.Count == 0)
+                if (messages.Count > 0)
                 {
-                    break;
+                    dispatchedAny = true;
+                    await DispatchBatchAsync(messages, stoppingToken).ConfigureAwait(false);
                 }
-
-                dispatchedAny = true;
-                foreach (var lease in messages)
+            }
+            else
+            {
+                for (var dispatchedCount = 0; dispatchedCount < _options.BatchSize; dispatchedCount++)
                 {
-                    stoppingToken.ThrowIfCancellationRequested();
-                    await DispatchAsync(lease, stoppingToken).ConfigureAwait(false);
+                    IReadOnlyList<OutboxLease> messages;
+                    try
+                    {
+                        var scope = scopeFactory.CreateAsyncScope();
+                        await using (scope.ConfigureAwait(false))
+                        {
+                            var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+                            messages = await store.ClaimBatchAsync(
+                                1,
+                                _timeProvider.GetUtcNow(),
+                                _options.LeaseDuration,
+                                stoppingToken).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception exception)
+                    {
+                        OutboxLog.ClaimBatchFailed(_logger, exception);
+                        await DelayOrWaitSignalAsync(stoppingToken).ConfigureAwait(false);
+                        claimFailed = true;
+                        break;
+                    }
+
+                    if (messages.Count == 0)
+                    {
+                        break;
+                    }
+
+                    dispatchedAny = true;
+                    await DispatchBatchAsync(messages, stoppingToken).ConfigureAwait(false);
                 }
             }
 
@@ -71,10 +107,39 @@ internal sealed class OutboxDispatcherService(
 
             if (!dispatchedAny)
             {
-                await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                await DelayOrWaitSignalAsync(stoppingToken).ConfigureAwait(false);
             }
         }
     }
+
+    private async Task DispatchBatchAsync(IReadOnlyList<OutboxLease> messages, CancellationToken stoppingToken)
+    {
+        var parallelism = _options.MaxDegreeOfParallelism;
+        if (parallelism <= 1 || messages.Count <= 1)
+        {
+            foreach (var lease in messages)
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+                await DispatchAsync(lease, stoppingToken).ConfigureAwait(false);
+            }
+
+            return;
+        }
+
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = parallelism,
+            CancellationToken = stoppingToken,
+        };
+
+        await Parallel.ForEachAsync(
+            messages,
+            parallelOptions,
+            async (lease, ct) => await DispatchAsync(lease, ct).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private Task<bool> DelayOrWaitSignalAsync(CancellationToken stoppingToken)
+        => _signal.WaitAsync(_options.PollingInterval, _timeProvider, stoppingToken);
 
     private async Task DispatchAsync(OutboxLease lease, CancellationToken stoppingToken)
     {
@@ -102,7 +167,7 @@ internal sealed class OutboxDispatcherService(
                     OutboxLog.DispatchSetupFailed(_logger, exception, lease.Message.Id);
                     if (store is null)
                     {
-                        await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
+                        await DelayOrWaitSignalAsync(stoppingToken).ConfigureAwait(false);
                     }
                     else
                     {
@@ -122,7 +187,7 @@ internal sealed class OutboxDispatcherService(
         catch (Exception exception)
         {
             OutboxLog.DispatchSetupFailed(_logger, exception, lease.Message.Id);
-            await Task.Delay(_options.PollingInterval, stoppingToken).ConfigureAwait(false);
+            await DelayOrWaitSignalAsync(stoppingToken).ConfigureAwait(false);
         }
     }
 
@@ -180,7 +245,7 @@ internal sealed class OutboxDispatcherService(
 
         try
         {
-            if (!await store.MarkProcessedAsync(lease, DateTimeOffset.UtcNow, stoppingToken).ConfigureAwait(false))
+            if (!await store.MarkProcessedAsync(lease, _timeProvider.GetUtcNow(), stoppingToken).ConfigureAwait(false))
             {
                 OutboxLog.LeaseLost(_logger, lease.Message.Id);
             }
@@ -203,14 +268,14 @@ internal sealed class OutboxDispatcherService(
         {
             try
             {
-                await Task.Delay(_options.LeaseRenewalInterval, heartbeatToken).ConfigureAwait(false);
+                await Task.Delay(_options.LeaseRenewalInterval, _timeProvider, heartbeatToken).ConfigureAwait(false);
                 var scope = scopeFactory.CreateAsyncScope();
                 await using (scope.ConfigureAwait(false))
                 {
                     var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
                     var renewed = await store.RenewLeaseAsync(
                         lease,
-                        DateTimeOffset.UtcNow,
+                        _timeProvider.GetUtcNow(),
                         _options.LeaseDuration,
                         heartbeatToken).ConfigureAwait(false);
                     if (renewed)
@@ -240,7 +305,7 @@ internal sealed class OutboxDispatcherService(
         {
             var released = await store.MarkFailedAsync(
                 lease,
-                DateTimeOffset.UtcNow.Add(_options.RetryDelay),
+                _timeProvider.GetUtcNow().Add(_options.RetryDelay),
                 exception.ToString(),
                 CancellationToken.None).ConfigureAwait(false);
             if (!released)

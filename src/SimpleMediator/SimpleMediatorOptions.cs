@@ -15,10 +15,13 @@ public class SimpleMediatorOptions
     // deterministic across AddSimpleMediator calls and different runtime implementations.
     internal List<Assembly> Assemblies { get; } = new();
     internal List<Type> Behaviors { get; } = new();
+    internal List<Type> StreamBehaviors { get; } = new();
+    internal List<Type> NotificationBehaviors { get; } = new();
     private ServiceLifetime? _defaultLifetime;
     private NotificationPublishStrategy? _notificationPublishStrategy;
     private int? _openGenericResolutionCacheCapacity;
     private bool? _requireScopedMediator;
+    private bool? _enableTelemetry;
 
     /// <summary>
     /// The default service lifetime used when registering discovered handlers and behaviors in DI.
@@ -56,6 +59,18 @@ public class SimpleMediatorOptions
     public bool ValidateOnBuild { get; set; }
 
     /// <summary>
+    /// When <c>true</c>, SimpleMediator emits <c>System.Diagnostics.Activity</c> spans and
+    /// <c>System.Diagnostics.Metrics.Meter</c> histograms under <see cref="SimpleMediatorDiagnostics.ActivitySourceName"/>
+    /// and <see cref="SimpleMediatorDiagnostics.MeterName"/> whenever a listener is active.
+    /// Defaults to <c>false</c>.
+    /// </summary>
+    public bool EnableTelemetry
+    {
+        get => _enableTelemetry ?? false;
+        set => _enableTelemetry = value;
+    }
+
+    /// <summary>
     /// Maximum number of open-generic request resolution plans retained per
     /// mediator configuration. Plans contain factories, never handler instances.
     /// </summary>
@@ -68,6 +83,7 @@ public class SimpleMediatorOptions
     internal bool HasCustomPublishStrategy => _notificationPublishStrategy.HasValue;
     internal bool HasCustomCacheCapacity => _openGenericResolutionCacheCapacity.HasValue;
     internal bool HasCustomRequireScopedMediator => _requireScopedMediator.HasValue;
+    internal bool HasCustomEnableTelemetry => _enableTelemetry.HasValue;
 
     /// <summary>
     /// Per-assembly discovery filters registered through
@@ -103,8 +119,8 @@ public class SimpleMediatorOptions
     }
 
     /// <summary>
-    /// Registers an assembly to scan for request handlers, notification handlers, pre/post processors,
-    /// and request exception handlers. Pipeline behaviors must be registered explicitly with
+    /// Registers an assembly to scan for request handlers, stream request handlers, notification handlers,
+    /// pre/post processors, and request exception handlers. Pipeline behaviors must be registered explicitly with
     /// <see cref="AddBehavior(Type)"/>.
     /// </summary>
     /// <param name="assembly">The assembly to scan.</param>
@@ -154,16 +170,59 @@ public class SimpleMediatorOptions
     public SimpleMediatorOptions AddBehavior(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type behaviorType)
     {
+        ValidateAndAddBehavior(
+            behaviorType,
+            typeof(IPipelineBehavior<,>),
+            OpenGenericRegistrationRules.ImplementsPipelineBehavior(behaviorType ?? throw new ArgumentNullException(nameof(behaviorType))),
+            Behaviors);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a stream pipeline behavior (<see cref="IStreamPipelineBehavior{TRequest, TResponse}"/>).
+    /// Execution order follows <see cref="IOrderedPipelineBehavior.Order"/> (lower runs first / outermost),
+    /// with equal values running in registration order (FIFO).
+    /// </summary>
+    public SimpleMediatorOptions AddStreamBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type behaviorType)
+    {
+        ValidateAndAddBehavior(
+            behaviorType,
+            typeof(IStreamPipelineBehavior<,>),
+            OpenGenericRegistrationRules.ImplementsStreamPipelineBehavior(behaviorType ?? throw new ArgumentNullException(nameof(behaviorType))),
+            StreamBehaviors);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a notification pipeline behavior (<see cref="INotificationBehavior{TNotification}"/>).
+    /// Execution order follows <see cref="IOrderedPipelineBehavior.Order"/> (lower runs first / outermost),
+    /// with equal values running in registration order (FIFO).
+    /// </summary>
+    public SimpleMediatorOptions AddNotificationBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type behaviorType)
+    {
+        ValidateAndAddBehavior(
+            behaviorType,
+            typeof(INotificationBehavior<>),
+            OpenGenericRegistrationRules.ImplementsNotificationBehavior(behaviorType ?? throw new ArgumentNullException(nameof(behaviorType))),
+            NotificationBehaviors);
+        return this;
+    }
+
+    private static void ValidateAndAddBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type behaviorType,
+        Type serviceDefinition,
+        bool implementsContract,
+        List<Type> targetList)
+    {
         ThrowHelper.ThrowIfNull(behaviorType);
 
-        var implementsPipelineBehavior = OpenGenericRegistrationRules.ImplementsPipelineBehavior(behaviorType);
-
-        if (!implementsPipelineBehavior)
+        if (!implementsContract)
         {
             throw new ArgumentException(
-                $"Type '{behaviorType.FullName}' must implement {typeof(IPipelineBehavior<,>).Name}. " +
-                "Register either an open generic type (e.g. typeof(MyBehavior<,>)) or a closed type " +
-                "implementing IPipelineBehavior<TRequest, TResponse>.",
+                $"Type '{behaviorType.FullName}' must implement {serviceDefinition.Name}. " +
+                "Register either an open generic type or a closed type implementing the behavior interface.",
                 nameof(behaviorType));
         }
 
@@ -179,26 +238,24 @@ public class SimpleMediatorOptions
         {
             var pipelineInterface = OpenGenericRegistrationRules.FindImplementedInterface(
                 behaviorType,
-                typeof(IPipelineBehavior<,>));
+                serviceDefinition);
 
             if (pipelineInterface is null ||
                 !OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
                     behaviorType,
                     pipelineInterface,
-                    typeof(IPipelineBehavior<,>)))
+                    serviceDefinition))
             {
                 throw new ArgumentException(
                     $"Open-generic behavior '{behaviorType.FullName}' cannot be closed by Microsoft DI: " +
-                    "its type parameters must line up 1:1 with IPipelineBehavior<TRequest, TResponse>.",
+                    $"its type parameters must line up 1:1 with {serviceDefinition.Name}.",
                     nameof(behaviorType));
             }
         }
 
-        if (!Behaviors.Contains(behaviorType))
+        if (!targetList.Contains(behaviorType))
         {
-            Behaviors.Add(behaviorType);
+            targetList.Add(behaviorType);
         }
-
-        return this;
     }
 }

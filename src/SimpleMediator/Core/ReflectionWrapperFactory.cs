@@ -21,19 +21,36 @@ internal static class ReflectionWrapperFactory
         "Source-generated registrations resolve every wrapper from the generated table.";
 
     internal static readonly Func<(Type Request, Type Response), object> Request = CreateRequestWrapper;
+    internal static readonly Func<(Type Request, Type Response), object> StreamRequest = CreateStreamRequestWrapper;
     internal static readonly Func<Type, object> Notification = CreateNotificationWrapper;
 
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = Justification)]
     [UnconditionalSuppressMessage("Trimming", "IL2055:MakeGenericType", Justification = Justification)]
     [UnconditionalSuppressMessage("Trimming", "IL2072:DynamicallyAccessedMembers", Justification = Justification)]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(RequestHandlerWrapperImpl<,>))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors, typeof(RequestHandlerWrapperImpl<,>))]
+    internal static object CreateRequestWrapper((Type Request, Type Response) key, Configuration.MediatorConfiguration? configuration)
+        => Activator.CreateInstance(typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response), configuration)!;
+
     private static object CreateRequestWrapper((Type Request, Type Response) key)
-        => Activator.CreateInstance(typeof(RequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response))!;
+        => CreateRequestWrapper(key, configuration: null);
 
     [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = Justification)]
     [UnconditionalSuppressMessage("Trimming", "IL2055:MakeGenericType", Justification = Justification)]
     [UnconditionalSuppressMessage("Trimming", "IL2072:DynamicallyAccessedMembers", Justification = Justification)]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, typeof(NotificationHandlerWrapperImpl<>))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors, typeof(StreamRequestHandlerWrapperImpl<,>))]
+    internal static object CreateStreamRequestWrapper((Type Request, Type Response) key, Configuration.MediatorConfiguration? configuration)
+        => Activator.CreateInstance(typeof(StreamRequestHandlerWrapperImpl<,>).MakeGenericType(key.Request, key.Response), configuration)!;
+
+    private static object CreateStreamRequestWrapper((Type Request, Type Response) key)
+        => CreateStreamRequestWrapper(key, configuration: null);
+
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = Justification)]
+    [UnconditionalSuppressMessage("Trimming", "IL2055:MakeGenericType", Justification = Justification)]
+    [UnconditionalSuppressMessage("Trimming", "IL2072:DynamicallyAccessedMembers", Justification = Justification)]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicConstructors, typeof(NotificationHandlerWrapperImpl<>))]
+    internal static object CreateNotificationWrapper(Type notificationType, Configuration.MediatorConfiguration? configuration)
+        => Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(notificationType), configuration)!;
+
     private static object CreateNotificationWrapper(Type notificationType)
-        => Activator.CreateInstance(typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(notificationType))!;
+        => CreateNotificationWrapper(notificationType, configuration: null);
 }

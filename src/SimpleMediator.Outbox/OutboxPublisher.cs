@@ -3,16 +3,23 @@ using SimpleMediator.Interfaces;
 namespace SimpleMediator.Outbox;
 
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1812", Justification = "Created by the package's dependency-injection registration.")]
-internal sealed class OutboxPublisher(IOutboxStore store, IOutboxSerializer serializer) : IOutboxPublisher
+internal sealed class OutboxPublisher(
+    IOutboxStore store,
+    IOutboxSerializer serializer,
+    TimeProvider? timeProvider = null,
+    IOutboxSignal? signal = null) : IOutboxPublisher
 {
-    public Task EnqueueAsync<TNotification>(
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
+    public async Task EnqueueAsync<TNotification>(
         TNotification notification,
         CancellationToken cancellationToken = default)
         where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);
-        var message = serializer.Serialize(notification, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        var message = serializer.Serialize(notification, Guid.NewGuid(), _timeProvider.GetUtcNow());
         ArgumentNullException.ThrowIfNull(message);
-        return store.EnqueueAsync(message, cancellationToken);
+        await store.EnqueueAsync(message, cancellationToken).ConfigureAwait(false);
+        signal?.Pulse();
     }
 }

@@ -29,6 +29,20 @@ internal sealed class BehaviorOrderCache
     public int[] GetOrder<TRequest, TResponse>(
         IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
         where TRequest : IRequest<TResponse>
+        => GetOrderedIndices(behaviors);
+
+    public int[] GetStreamOrder<TRequest, TResponse>(
+        IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>> behaviors)
+        where TRequest : IStreamRequest<TResponse>
+        => GetOrderedIndices(behaviors);
+
+    public int[] GetNotificationOrder<TNotification>(
+        IReadOnlyList<INotificationBehavior<TNotification>> behaviors)
+        where TNotification : INotification
+        => GetOrderedIndices(behaviors);
+
+    private int[] GetOrderedIndices<TBehavior>(IReadOnlyList<TBehavior> behaviors)
+        where TBehavior : IOrderedPipelineBehavior
     {
         var count = behaviors.Count;
         if (count <= 1)
@@ -45,10 +59,10 @@ internal sealed class BehaviorOrderCache
         return ComputeAndStore(behaviors);
     }
 
-    private static bool Matches<TRequest, TResponse>(
+    private static bool Matches<TBehavior>(
         Entry entry,
-        IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
-        where TRequest : IRequest<TResponse>
+        IReadOnlyList<TBehavior> behaviors)
+        where TBehavior : IOrderedPipelineBehavior
     {
         var count = behaviors.Count;
         if (entry.Types.Length != count)
@@ -69,9 +83,8 @@ internal sealed class BehaviorOrderCache
         return true;
     }
 
-    private int[] ComputeAndStore<TRequest, TResponse>(
-        IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)
-        where TRequest : IRequest<TResponse>
+    private int[] ComputeAndStore<TBehavior>(IReadOnlyList<TBehavior> behaviors)
+        where TBehavior : IOrderedPipelineBehavior
     {
         var count = behaviors.Count;
 

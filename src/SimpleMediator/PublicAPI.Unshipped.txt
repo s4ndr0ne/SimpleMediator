@@ -1,1 +1,25 @@
 #nullable enable
+const SimpleMediator.SimpleMediatorDiagnostics.ActivitySourceName = "SimpleMediator" -> string!
+const SimpleMediator.SimpleMediatorDiagnostics.MeterName = "SimpleMediator" -> string!
+SimpleMediator.Core.Mediator.CreateStream<TResponse>(SimpleMediator.Interfaces.IStreamRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
+SimpleMediator.GenerateSimpleMediatorModuleAttribute
+SimpleMediator.GenerateSimpleMediatorModuleAttribute.GenerateSimpleMediatorModuleAttribute(string? moduleName = null) -> void
+SimpleMediator.GenerateSimpleMediatorModuleAttribute.ModuleName.get -> string?
+SimpleMediator.Generated.GeneratedMediatorRegistry.AddStreamRequest<TRequest, TResponse>() -> void
+SimpleMediator.Interfaces.INotificationBehavior<TNotification>
+SimpleMediator.Interfaces.INotificationBehavior<TNotification>.Handle(TNotification notification, SimpleMediator.Interfaces.NotificationHandlerDelegate! next, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.INotificationPublisher
+SimpleMediator.Interfaces.INotificationPublisher.Publish<TNotification>(System.Collections.Generic.IEnumerable<SimpleMediator.Interfaces.INotificationHandler<TNotification>!>! handlers, TNotification notification, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task!
+SimpleMediator.Interfaces.ISender.CreateStream<TResponse>(SimpleMediator.Interfaces.IStreamRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
+SimpleMediator.Interfaces.IStreamPipelineBehavior<TRequest, TResponse>
+SimpleMediator.Interfaces.IStreamPipelineBehavior<TRequest, TResponse>.Handle(TRequest request, SimpleMediator.Interfaces.StreamHandlerDelegate<TResponse>! next, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
+SimpleMediator.Interfaces.IStreamRequest<TResponse>
+SimpleMediator.Interfaces.IStreamRequestHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IStreamRequestHandler<TRequest, TResponse>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
+SimpleMediator.Interfaces.NotificationHandlerDelegate
+SimpleMediator.Interfaces.StreamHandlerDelegate<TResponse>
+SimpleMediator.SimpleMediatorDiagnostics
+SimpleMediator.SimpleMediatorOptions.AddNotificationBehavior(System.Type! behaviorType) -> SimpleMediator.SimpleMediatorOptions!
+SimpleMediator.SimpleMediatorOptions.AddStreamBehavior(System.Type! behaviorType) -> SimpleMediator.SimpleMediatorOptions!
+SimpleMediator.SimpleMediatorOptions.EnableTelemetry.get -> bool
+SimpleMediator.SimpleMediatorOptions.EnableTelemetry.set -> void

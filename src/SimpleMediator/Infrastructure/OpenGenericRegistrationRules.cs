@@ -12,6 +12,7 @@ internal static class OpenGenericRegistrationRules
     private static readonly Type[] SupportedHandlerInterfaces =
     [
         typeof(IRequestHandler<,>),
+        typeof(IStreamRequestHandler<,>),
         typeof(INotificationHandler<>),
         typeof(IPreRequestHandler<,>),
         typeof(IPostRequestHandler<,>),
@@ -20,11 +21,14 @@ internal static class OpenGenericRegistrationRules
 
     internal static bool IsSupportedOpenGenericService(Type serviceTypeDefinition)
         => serviceTypeDefinition == typeof(IRequestHandler<,>)
+           || serviceTypeDefinition == typeof(IStreamRequestHandler<,>)
            || serviceTypeDefinition == typeof(INotificationHandler<>)
            || serviceTypeDefinition == typeof(IPreRequestHandler<,>)
            || serviceTypeDefinition == typeof(IPostRequestHandler<,>)
            || serviceTypeDefinition == typeof(IRequestExceptionHandler<,>)
-           || serviceTypeDefinition == typeof(IPipelineBehavior<,>);
+           || serviceTypeDefinition == typeof(IPipelineBehavior<,>)
+           || serviceTypeDefinition == typeof(IStreamPipelineBehavior<,>)
+           || serviceTypeDefinition == typeof(INotificationBehavior<>);
 
     internal static Type? FindImplementedInterface(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type implementationType,
@@ -58,8 +62,19 @@ internal static class OpenGenericRegistrationRules
            && !serviceType.ContainsGenericParameters
            && serviceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>);
 
+    internal static bool IsClosedStreamRequestHandler(Type serviceType)
+        => serviceType.IsGenericType
+           && !serviceType.ContainsGenericParameters
+           && serviceType.GetGenericTypeDefinition() == typeof(IStreamRequestHandler<,>);
+
     internal static bool IsPipelineBehaviorDefinition(Type serviceTypeDefinition)
         => serviceTypeDefinition == typeof(IPipelineBehavior<,>);
+
+    internal static bool IsStreamPipelineBehaviorDefinition(Type serviceTypeDefinition)
+        => serviceTypeDefinition == typeof(IStreamPipelineBehavior<,>);
+
+    internal static bool IsNotificationBehaviorDefinition(Type serviceTypeDefinition)
+        => serviceTypeDefinition == typeof(INotificationBehavior<>);
 
     internal static bool MatchesSupportedHandlerInterface(Type genericTypeDefinition)
         => SupportedHandlerInterfaces.Contains(genericTypeDefinition);
@@ -70,4 +85,18 @@ internal static class OpenGenericRegistrationRules
             .Any(implementedInterface =>
                 implementedInterface.IsGenericType &&
                 IsPipelineBehaviorDefinition(implementedInterface.GetGenericTypeDefinition()));
+
+    internal static bool ImplementsStreamPipelineBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type implementationType)
+        => implementationType.GetInterfaces()
+            .Any(implementedInterface =>
+                implementedInterface.IsGenericType &&
+                IsStreamPipelineBehaviorDefinition(implementedInterface.GetGenericTypeDefinition()));
+
+    internal static bool ImplementsNotificationBehavior(
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type implementationType)
+        => implementationType.GetInterfaces()
+            .Any(implementedInterface =>
+                implementedInterface.IsGenericType &&
+                IsNotificationBehaviorDefinition(implementedInterface.GetGenericTypeDefinition()));
 }

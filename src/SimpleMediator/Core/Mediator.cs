@@ -14,8 +14,10 @@ public class Mediator : IMediator
     // Wrapper caches belong to the DI configuration. This avoids a process-wide static cache
     // retaining types from collectible plugin AssemblyLoadContexts.
     private readonly WrapperCache<(Type Request, Type Response)> _requestHandlerWrappers;
+    private readonly WrapperCache<(Type Request, Type Response)> _streamRequestHandlerWrappers;
     private readonly WrapperCache<Type> _notificationHandlerWrappers;
     private readonly Func<(Type Request, Type Response), object> _requestWrapperFactory;
+    private readonly Func<(Type Request, Type Response), object> _streamRequestWrapperFactory;
     private readonly Func<Type, object> _notificationWrapperFactory;
 
     /// <summary>
@@ -79,6 +81,8 @@ public class Mediator : IMediator
         // so a directly constructed mediator keeps its own.
         _requestHandlerWrappers = configuration?.RequestHandlerWrappers
             ?? new WrapperCache<(Type Request, Type Response)>();
+        _streamRequestHandlerWrappers = configuration?.StreamRequestHandlerWrappers
+            ?? new WrapperCache<(Type Request, Type Response)>();
         _notificationHandlerWrappers = configuration?.NotificationHandlerWrappers
             ?? new WrapperCache<Type>();
 
@@ -86,6 +90,7 @@ public class Mediator : IMediator
         // (trim/AOT-safe), or through reflection for the reflection-based registration. Only a provider
         // without any SimpleMediator registration has no configuration; it uses reflection on JIT runtimes.
         _requestWrapperFactory = configuration?.RequestWrapperFactory ?? ReflectionWrapperFactory.Request;
+        _streamRequestWrapperFactory = configuration?.StreamRequestWrapperFactory ?? ReflectionWrapperFactory.StreamRequest;
         _notificationWrapperFactory = configuration?.NotificationWrapperFactory ?? ReflectionWrapperFactory.Notification;
     }
 
@@ -116,6 +121,20 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlerWrappers.GetOrAdd(
             (requestType, typeof(TResponse)),
             _requestWrapperFactory);
+
+        return handler.Handle(request, _serviceProvider, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default)
+    {
+        ThrowHelper.ThrowIfNull(request);
+
+        var requestType = request.GetType();
+
+        var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlerWrappers.GetOrAdd(
+            (requestType, typeof(TResponse)),
+            _streamRequestWrapperFactory);
 
         return handler.Handle(request, _serviceProvider, cancellationToken);
     }

@@ -292,6 +292,117 @@ public sealed class OutboxTests
         Assert.True(failed.RetryAtUtc > failed.FailedAtUtc);
     }
 
+    [Fact]
+    public async Task Worker_claims_full_batch_and_dispatches_in_parallel_when_configured()
+    {
+        var firstMessage = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "first", DateTimeOffset.UtcNow);
+        var secondMessage = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "second", DateTimeOffset.UtcNow);
+        var store = new ConcurrentOutboxStore([firstMessage, secondMessage]);
+        var publisher = new BlockingTestPublisher();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOutboxStore>(store);
+        services.AddSingleton<IOutboxSerializer, TestOutboxSerializer>();
+        services.AddSingleton<IPublisher>(publisher);
+        services.AddSimpleMediatorOutbox(options =>
+        {
+            options.BatchSize = 16;
+            options.ClaimFullBatch = true;
+            options.MaxDegreeOfParallelism = 4;
+            options.PollingInterval = TimeSpan.FromMilliseconds(10);
+        });
+        using var provider = services.BuildServiceProvider();
+
+        var worker = provider.GetServices<IHostedService>().Single();
+        await worker.StartAsync(CancellationToken.None);
+
+        try
+        {
+            await publisher.FirstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var secondStarted = await publisher.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("second", secondStarted);
+
+            publisher.ReleaseFirst.TrySetResult();
+            await store.AllProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Contains(16, store.RequestedBatchSizes);
+        }
+        finally
+        {
+            publisher.ReleaseFirst.TrySetResult();
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_wakes_sleeping_worker_immediately_via_OutboxSignal()
+    {
+        var store = new DynamicOutboxStore();
+        var publisher = new TestPublisher();
+        var services = new ServiceCollection();
+        services.AddSingleton<IOutboxStore>(store);
+        services.AddSingleton<IOutboxSerializer, TestOutboxSerializer>();
+        services.AddSingleton<IPublisher>(publisher);
+        services.AddSimpleMediatorOutbox(options =>
+        {
+            // Very long polling interval so the test only succeeds within 5s if the signal wakes the worker!
+            options.PollingInterval = TimeSpan.FromHours(1);
+        });
+        using var provider = services.BuildServiceProvider();
+
+        var worker = provider.GetServices<IHostedService>().Single();
+        await worker.StartAsync(CancellationToken.None);
+
+        try
+        {
+            await store.FirstPollCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var scope = provider.CreateScope();
+            var outbox = scope.ServiceProvider.GetRequiredService<IOutboxPublisher>();
+            await outbox.EnqueueAsync(new SampleNotification("woken"));
+
+            var published = await publisher.Published.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(new SampleNotification("woken"), published);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    private sealed class DynamicOutboxStore : IOutboxStore
+    {
+        private readonly ConcurrentQueue<OutboxLease> _queue = new();
+        public TaskCompletionSource FirstPollCompleted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken = default)
+        {
+            _queue.Enqueue(new OutboxLease(message, Guid.NewGuid()));
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<OutboxLease>> ClaimBatchAsync(
+            int batchSize,
+            DateTimeOffset nowUtc,
+            TimeSpan leaseDuration,
+            CancellationToken cancellationToken = default)
+        {
+            FirstPollCompleted.TrySetResult();
+            if (_queue.TryDequeue(out var lease))
+            {
+                return Task.FromResult<IReadOnlyList<OutboxLease>>([lease]);
+            }
+
+            return Task.FromResult<IReadOnlyList<OutboxLease>>([]);
+        }
+
+        public Task<bool> RenewLeaseAsync(OutboxLease lease, DateTimeOffset nowUtc, TimeSpan leaseDuration, CancellationToken cancellationToken = default)
+            => Task.FromResult(true);
+
+        public Task<bool> MarkProcessedAsync(OutboxLease lease, DateTimeOffset processedAtUtc, CancellationToken cancellationToken = default)
+            => Task.FromResult(true);
+
+        public Task<bool> MarkFailedAsync(OutboxLease lease, DateTimeOffset retryAtUtc, string error, CancellationToken cancellationToken = default)
+            => Task.FromResult(true);
+    }
+
     private sealed record SampleNotification(string Value) : INotification;
 
     private sealed class TestOutboxSerializer : IOutboxSerializer

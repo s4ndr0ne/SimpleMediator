@@ -136,6 +136,9 @@ public class SenderPublisherTests
         public Task Send(IRequest request, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
+        public IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public Task Publish<TNotification>(TNotification notification, CancellationToken cancellationToken = default)
             where TNotification : INotification
             => throw new NotSupportedException();

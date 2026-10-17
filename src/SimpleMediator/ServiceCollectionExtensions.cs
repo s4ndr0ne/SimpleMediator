@@ -65,9 +65,8 @@ public static class ServiceCollectionExtensions
         AddMediatorServices(services);
 
         var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers, generated: null);
-
         RegisterBehaviors(services, options);
+        var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers, generated: null);
 
         if (configuration.ValidationRequested)
         {
@@ -122,22 +121,34 @@ public static class ServiceCollectionExtensions
         // Order determines the primary execution sequence. Behaviors with equal Order run
         // in registration order (FIFO): the first registered behavior is outermost;
         // values are evaluated by the wrapper for each request.
-        foreach (var behaviorType in options.Behaviors)
+        RegisterBehaviorGroup(services, options.Behaviors, typeof(IPipelineBehavior<,>), options.DefaultLifetime);
+        RegisterBehaviorGroup(services, options.StreamBehaviors, typeof(IStreamPipelineBehavior<,>), options.DefaultLifetime);
+        RegisterBehaviorGroup(services, options.NotificationBehaviors, typeof(INotificationBehavior<>), options.DefaultLifetime);
+    }
+
+    [RequiresUnreferencedCode(ReflectionMessage)]
+    private static void RegisterBehaviorGroup(
+        IServiceCollection services,
+        List<Type> behaviorTypes,
+        Type serviceDefinition,
+        ServiceLifetime lifetime)
+    {
+        foreach (var behaviorType in behaviorTypes)
         {
             if (behaviorType.IsGenericTypeDefinition)
             {
-                AddBehavior(services, typeof(IPipelineBehavior<,>), behaviorType, options.DefaultLifetime);
+                AddBehavior(services, serviceDefinition, behaviorType, lifetime);
                 continue;
             }
 
             var closedInterfaces = behaviorType.GetInterfaces()
                 .Where(implementedInterface =>
                     implementedInterface.IsGenericType &&
-                    implementedInterface.GetGenericTypeDefinition() == typeof(IPipelineBehavior<,>));
+                    implementedInterface.GetGenericTypeDefinition() == serviceDefinition);
 
             foreach (var closedInterface in closedInterfaces)
             {
-                AddBehavior(services, closedInterface, behaviorType, options.DefaultLifetime);
+                AddBehavior(services, closedInterface, behaviorType, lifetime);
             }
         }
     }
@@ -219,6 +230,10 @@ public static class ServiceCollectionExtensions
                 ? options.OpenGenericResolutionCacheCapacity
                 : existing.ResolutionCacheCapacity;
 
+            var enableTelemetry = options.HasCustomEnableTelemetry
+                ? options.EnableTelemetry
+                : existing.EnableTelemetry;
+
             var mergedHandlers = existing.CustomOpenGenericRequestHandlers
                 .Concat(customOpenGenericRequestHandlers)
                 .GroupBy(registration => registration.ImplementationType)
@@ -248,8 +263,10 @@ public static class ServiceCollectionExtensions
                 requireScopedMediator,
                 existing.RequireScopedMediatorIsExplicit || options.HasCustomRequireScopedMediator,
                 Merge(existing.GeneratedRequestWrappers, generated?.RequestWrappers),
+                Merge(existing.GeneratedStreamRequestWrappers, generated?.StreamRequestWrappers),
                 Merge(existing.GeneratedNotificationWrappers, generated?.NotificationWrappers),
-                existing.AllowsReflectionDispatch || reflectionDispatch);
+                existing.AllowsReflectionDispatch || reflectionDispatch,
+                enableTelemetry);
 
             services.Remove(existingDescriptor);
             services.AddSingleton(configuration);
@@ -264,15 +281,17 @@ public static class ServiceCollectionExtensions
             options.RequireScopedMediator,
             options.HasCustomRequireScopedMediator,
             generated?.RequestWrappers,
+            generated?.StreamRequestWrappers,
             generated?.NotificationWrappers,
-            reflectionDispatch);
+            reflectionDispatch,
+            options.EnableTelemetry);
         services.AddSingleton(initialConfiguration);
         return initialConfiguration;
     }
 
-    private static IReadOnlyDictionary<TKey, object>? Merge<TKey>(
-        IReadOnlyDictionary<TKey, object>? existing,
-        IReadOnlyDictionary<TKey, object>? added)
+    private static IReadOnlyDictionary<TKey, TValue>? Merge<TKey, TValue>(
+        IReadOnlyDictionary<TKey, TValue>? existing,
+        IReadOnlyDictionary<TKey, TValue>? added)
         where TKey : notnull
     {
         if (existing is null || existing.Count == 0)
@@ -285,7 +304,7 @@ public static class ServiceCollectionExtensions
             return existing;
         }
 
-        var merged = new Dictionary<TKey, object>();
+        var merged = new Dictionary<TKey, TValue>();
         foreach (var entry in existing)
         {
             merged[entry.Key] = entry.Value;

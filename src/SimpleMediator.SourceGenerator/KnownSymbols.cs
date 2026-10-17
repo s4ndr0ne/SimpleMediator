@@ -10,16 +10,21 @@ internal sealed class KnownSymbols
     private static readonly string[] MetadataNames =
     [
         "SimpleMediator.Interfaces.IRequest`1",
+        "SimpleMediator.Interfaces.IStreamRequest`1",
         "SimpleMediator.Interfaces.INotification",
         "SimpleMediator.Interfaces.IRequestHandler`2",
+        "SimpleMediator.Interfaces.IStreamRequestHandler`2",
         "SimpleMediator.Interfaces.INotificationHandler`1",
         "SimpleMediator.Interfaces.IPreRequestHandler`2",
         "SimpleMediator.Interfaces.IPostRequestHandler`2",
         "SimpleMediator.Interfaces.IRequestExceptionHandler`2",
         "SimpleMediator.Interfaces.IPipelineBehavior`2",
+        "SimpleMediator.Interfaces.IStreamPipelineBehavior`2",
+        "SimpleMediator.Interfaces.INotificationBehavior`1",
         "SimpleMediator.Interfaces.ISender",
         "SimpleMediator.Interfaces.IPublisher",
         "SimpleMediator.SimpleMediatorOptions",
+        "SimpleMediator.GenerateSimpleMediatorModuleAttribute",
         "System.Reflection.Assembly",
         "System.Reflection.IntrospectionExtensions",
         "System.Reflection.TypeInfo",
@@ -28,26 +33,35 @@ internal sealed class KnownSymbols
     private KnownSymbols(INamedTypeSymbol[] symbols)
     {
         Request = symbols[0];
-        Notification = symbols[1];
-        RequestHandler = symbols[2];
-        NotificationHandler = symbols[3];
-        PreRequestHandler = symbols[4];
-        PostRequestHandler = symbols[5];
-        RequestExceptionHandler = symbols[6];
-        PipelineBehavior = symbols[7];
-        Sender = symbols[8];
-        Publisher = symbols[9];
-        Options = symbols[10];
-        Assembly = symbols[11];
-        IntrospectionExtensions = symbols[12];
-        TypeInfo = symbols[13];
+        StreamRequest = symbols[1];
+        Notification = symbols[2];
+        RequestHandler = symbols[3];
+        StreamRequestHandler = symbols[4];
+        NotificationHandler = symbols[5];
+        PreRequestHandler = symbols[6];
+        PostRequestHandler = symbols[7];
+        RequestExceptionHandler = symbols[8];
+        PipelineBehavior = symbols[9];
+        StreamPipelineBehavior = symbols[10];
+        NotificationBehavior = symbols[11];
+        Sender = symbols[12];
+        Publisher = symbols[13];
+        Options = symbols[14];
+        ModuleAttribute = symbols[15];
+        Assembly = symbols[16];
+        IntrospectionExtensions = symbols[17];
+        TypeInfo = symbols[18];
     }
 
     public INamedTypeSymbol Request { get; }
 
+    public INamedTypeSymbol StreamRequest { get; }
+
     public INamedTypeSymbol Notification { get; }
 
     public INamedTypeSymbol RequestHandler { get; }
+
+    public INamedTypeSymbol StreamRequestHandler { get; }
 
     public INamedTypeSymbol NotificationHandler { get; }
 
@@ -59,11 +73,17 @@ internal sealed class KnownSymbols
 
     public INamedTypeSymbol PipelineBehavior { get; }
 
+    public INamedTypeSymbol StreamPipelineBehavior { get; }
+
+    public INamedTypeSymbol NotificationBehavior { get; }
+
     public INamedTypeSymbol Sender { get; }
 
     public INamedTypeSymbol Publisher { get; }
 
     public INamedTypeSymbol Options { get; }
+
+    public INamedTypeSymbol ModuleAttribute { get; }
 
     public INamedTypeSymbol Assembly { get; }
 
@@ -103,18 +123,29 @@ internal sealed class KnownSymbols
     /// </summary>
     public bool IsHandlerInterface(INamedTypeSymbol definition)
         => Equal(definition, RequestHandler) ||
+           Equal(definition, StreamRequestHandler) ||
            Equal(definition, NotificationHandler) ||
            Equal(definition, PreRequestHandler) ||
            Equal(definition, PostRequestHandler) ||
            Equal(definition, RequestExceptionHandler);
 
-    /// <summary>Handler interfaces whose type arguments are (request, response).</summary>
+    public bool IsBehaviorInterface(INamedTypeSymbol definition)
+        => Equal(definition, PipelineBehavior) ||
+           Equal(definition, StreamPipelineBehavior) ||
+           Equal(definition, NotificationBehavior);
+
+    /// <summary>Handler/behavior interfaces whose type arguments are (request, response).</summary>
     public bool IsRequestShapedInterface(INamedTypeSymbol definition)
         => Equal(definition, RequestHandler) ||
            Equal(definition, PreRequestHandler) ||
            Equal(definition, PostRequestHandler) ||
            Equal(definition, RequestExceptionHandler) ||
            Equal(definition, PipelineBehavior);
+
+    /// <summary>Handler/behavior interfaces whose type arguments are (streamRequest, response).</summary>
+    public bool IsStreamRequestShapedInterface(INamedTypeSymbol definition)
+        => Equal(definition, StreamRequestHandler) ||
+           Equal(definition, StreamPipelineBehavior);
 
     public static bool Equal(ISymbol? left, ISymbol? right)
         => SymbolEqualityComparer.Default.Equals(left, right);

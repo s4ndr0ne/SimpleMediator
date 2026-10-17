@@ -42,7 +42,12 @@ public static class OutboxServiceCollectionExtensions
         builder.Validate(
             static options => options.RetryDelay >= TimeSpan.Zero,
             "RetryDelay cannot be negative.");
+        builder.Validate(
+            static options => options.MaxDegreeOfParallelism > 0,
+            "MaxDegreeOfParallelism must be greater than zero.");
 
+        services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<IOutboxSignal, OutboxSignal>();
         services.TryAddSingleton(static provider =>
             provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<OutboxOptions>>().Value);
         services.TryAddScoped<IOutboxPublisher, OutboxPublisher>();

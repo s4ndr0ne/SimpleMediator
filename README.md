@@ -14,14 +14,16 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 
 ## Core Features & Optimizations
 
-- **🚀 Cached Dispatch**: One typed wrapper per request/notification type is created on first use and cached, so steady-state dispatch involves no reflection; handlers, behaviors and pre/post handlers are then resolved through Microsoft DI on every call so lifetimes stay correct.
+- **🚀 Cached Dispatch & Zero-Allocation Fast Path**: One typed wrapper per request/stream/notification type is created on first use and cached, so steady-state dispatch involves no reflection. On the first call for a given `(TRequest, TResponse)`, the wrapper probes whether pre-handlers, post-handlers, or pipeline behaviors exist; when none are registered, subsequent calls skip `GetServices<...>()` array allocations and async state machines entirely.
 - **🛡️ Scope Correctness**: Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers, and resolving the mediator from the root provider — which would silently turn every one of them into a process-wide singleton — throws `MediatorScopeException` when it is resolved. See [Resolve the mediator from a scope](#2-resolve-the-mediator-from-a-scope-not-from-the-root).
-- **✂️ Segregated interfaces**: depend on `ISender` (requests) or `IPublisher` (notifications) instead of the full `IMediator`.
-- **⚡ Configurable Notification Dispatch**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution via `Task.WhenAll` when handlers are independent.
-- **🔗 Advanced Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
-- **✂️ Native AOT ready**: the optional `s4ndr0ne.SimpleMediator.SourceGenerator` package discovers handlers at compile time and emits `AddSimpleMediatorGenerated`, a drop-in replacement for `AddSimpleMediator` with no trim/AOT warnings. See [AOT & Trimming](#aot--trimming).
+- **✂️ Segregated interfaces**: depend on `ISender` (requests and streams) or `IPublisher` (notifications) instead of the full `IMediator`.
+- **🌊 Async Streaming (`IStreamRequest<TResponse>`)**: First-class `IAsyncEnumerable<TResponse>` streaming via `ISender.CreateStream`, complete with ordered `IStreamPipelineBehavior<TRequest, TResponse>` and full Source Generator / Native AOT support.
+- **⚡ Configurable Notification Dispatch & Pipeline**: Notification handlers run **sequentially by default** — safe to share a scoped service (like `DbContext`) across handlers — and can opt into parallel execution (`Task.WhenAll`), custom `INotificationPublisher` strategies, and ordered `INotificationBehavior<TNotification>` middleware.
+- **🔗 Advanced Request Pipeline**: Supports `IPipelineBehavior`, `IPreRequestHandler`, `IPostRequestHandler`, and `IRequestExceptionHandler`, with ordering and open generics — including **open-generic request handlers** for generic requests.
+- **📊 Built-in Zero-Dependency Telemetry**: Opt-in `ActivitySource` and `Meter` (`SimpleMediatorDiagnostics`) via `options.EnableTelemetry = true`, with zero overhead when disabled or when no listener is attached.
+- **✂️ Native AOT & Multi-Project Module Support**: the optional `s4ndr0ne.SimpleMediator.SourceGenerator` package discovers handlers at compile time and emits `AddSimpleMediatorGenerated`, plus `[assembly: GenerateSimpleMediatorModule]` so referenced domain/application assemblies can expose `internal` handlers without reflection. See [AOT & Trimming](#aot--trimming).
 - **📦 Minimal Dependencies**: Built on top of `Microsoft.Extensions.DependencyInjection.Abstractions`.
-- **🎯 Target frameworks**: `net8.0`, `net10.0` and `netstandard2.0` (for legacy consumers such as .NET Framework 4.7.2+; on netstandard2.0, `IAsyncDisposable` and `ValueTask` come from `Microsoft.Bcl.AsyncInterfaces`, and implementers of `IOrderedPipelineBehavior` / `IRequestExceptionHandler<,>` must declare `Order` explicitly because default interface members are not supported).
+- **🎯 Target frameworks**: `net8.0`, `net10.0` and `netstandard2.0` (for legacy consumers such as .NET Framework 4.7.2+; on netstandard2.0, `IAsyncDisposable`, `IAsyncEnumerable<T>`, and `ValueTask` come from `Microsoft.Bcl.AsyncInterfaces`, and implementers of `IOrderedPipelineBehavior` / `IRequestExceptionHandler<,>` must declare `Order` explicitly because default interface members are not supported).
 
 ## Installation
 This library is intended to be used as a NuGet package. To install it, use the .NET CLI:
@@ -161,7 +163,7 @@ the returned `IMediatorScope` exposes `Mediator` and `ServiceProvider` and imple
 
 | Interface | Members | Typical consumer |
 |---|---|---|
-| `ISender` | `Send<TResponse>(IRequest<TResponse>)`, `Send(IRequest)` | controllers, endpoints, application services |
+| `ISender` | `Send<TResponse>(IRequest<TResponse>)`, `Send(IRequest)`, `CreateStream<TResponse>(IStreamRequest<TResponse>)` | controllers, endpoints, application services |
 | `IPublisher` | `Publish<TNotification>(TNotification)` | domain-event dispatchers, outbox relays |
 | `IMediator : ISender, IPublisher` | all of the above | components that need both |
 
@@ -213,6 +215,57 @@ var response = await mediator.Send(new PingRequest("Hello"));
 
 > **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
 
+### Streaming (`IStreamRequest<TResponse>`)
+Stream requests return an `IAsyncEnumerable<TResponse>` for progressive/chunked results (e.g., LLM token streams, large dataset queries, SSE endpoints).
+
+```csharp
+// 1. Define Stream Request
+public record CounterStream(int Count) : IStreamRequest<int>;
+
+// 2. Define Stream Handler
+public class CounterStreamHandler : IStreamRequestHandler<CounterStream, int>
+{
+    public async IAsyncEnumerable<int> Handle(
+        CounterStream request,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        for (var i = 1; i <= request.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Yield();
+            yield return i;
+        }
+    }
+}
+
+// 3. Consume via ISender / IMediator
+await foreach (var item in mediator.CreateStream(new CounterStream(5), ct))
+{
+    Console.WriteLine(item);
+}
+```
+
+Stream requests support ordered pipeline behaviors via `IStreamPipelineBehavior<TRequest, TResponse>` and `options.AddStreamBehavior(...)`:
+
+```csharp
+public class LoggingStreamBehavior<TRequest, TResponse> : IStreamPipelineBehavior<TRequest, TResponse>
+    where TRequest : IStreamRequest<TResponse>
+{
+    public int Order => 0;
+
+    public async IAsyncEnumerable<TResponse> Handle(
+        TRequest request,
+        StreamHandlerDelegate<TResponse> next,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        await foreach (var item in next().WithCancellation(ct).ConfigureAwait(false))
+        {
+            yield return item;
+        }
+    }
+}
+```
+
 ### Notifications
 Notifications are broadcast messages sent to every registered handler.
 
@@ -228,16 +281,20 @@ public class AnalyticsHandler : INotificationHandler<UserCreated> { ... }
 await mediator.Publish(new UserCreated("user@example.com"));
 ```
 
-#### Dispatch strategy
+#### Dispatch strategy, custom `INotificationPublisher`, and `INotificationBehavior`
 Publishing a notification with **no** registered handler is a silent no-op, not an error. By default handlers run **sequentially** (`NotificationPublishStrategy.Sequential`). This is the safe choice: all handlers share the same DI scope, so a scoped, non-thread-safe service (e.g. `DbContext`) is never touched concurrently. If a handler throws, the remaining handlers are not invoked. Every notification handler must return a non-null `Task`; returning `null` fails with `InvalidOperationException` in sequential mode and follows the same single-failure contract in parallel mode.
 
-Opt into parallel dispatch only when handlers are independent:
+Opt into parallel dispatch only when handlers are independent, or supply a custom `INotificationPublisher` / `INotificationBehavior<TNotification>`:
 
 ```csharp
 services.AddSimpleMediator(options =>
 {
     options.RegisterAssembly(typeof(Program).Assembly);
     options.NotificationPublishStrategy = NotificationPublishStrategy.Parallel;
+    // Optional: custom publisher implementation (overrides NotificationPublishStrategy)
+    // options.NotificationPublisherType = typeof(ResilientNotificationPublisher);
+    // Optional: ordered notification middleware (open-generic or closed)
+    // options.AddNotificationBehavior(typeof(NotificationLoggingBehavior<>));
 });
 ```
 
@@ -286,7 +343,7 @@ lifetime depend on module registration order.
 ### Transactional Outbox (optional package)
 
 The separate `s4ndr0ne.SimpleMediator.Outbox` package provides provider-agnostic storage/serialization
-contracts, `IOutboxPublisher`, and a hosted dispatcher. It intentionally does not choose a database,
+contracts, `IOutboxPublisher`, `IOutboxSignal`, and a hosted dispatcher. It intentionally does not choose a database,
 serializer, or schema. Register your implementations and the package services:
 
 ```csharp
@@ -297,21 +354,12 @@ services.AddSimpleMediatorOutbox(options =>
 {
     options.BatchSize = 32;
     options.PollingInterval = TimeSpan.FromSeconds(5);
+    options.ClaimFullBatch = true;        // Claim the whole batch up front to reduce multi-worker contention
+    options.MaxDegreeOfParallelism = 4;   // Dispatch up to 4 leased messages concurrently in isolated DI scopes
 });
 ```
 
-Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` instead of
-`IPublisher.Publish`. The store's `EnqueueAsync` implementation must persist the outbox row in the
-same database transaction as the business changes. The worker claims up to `BatchSize` messages per
-polling cycle, one at a time immediately before dispatching each through `IPublisher` in its own DI
-scope. While a handler runs, it renews the lease every `LeaseRenewalInterval` (20 seconds by default,
-less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**,
-not exactly once: a process can fail after a handler ran but before the row was marked processed, so
-notification handlers should be idempotent. `ClaimBatchAsync` must atomically lease rows across workers
-and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and
-`MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false`
-when the lease expired or another worker reclaimed the message. The store implementation owns
-persistence schema, attempt limits, and dead-letter policy.
+Inject `IOutboxPublisher` where notifications are raised and call `Publish` (which persists via `IOutboxStore.EnqueueAsync` and immediately pulses `IOutboxSignal` so the background worker wakes up without waiting for `PollingInterval`). Both `OutboxPublisher` and `OutboxDispatcherService` use `TimeProvider` (defaulting to `TimeProvider.System` via `TryAddSingleton`) for deterministic testing. While a handler runs, the worker renews the lease every `LeaseRenewalInterval` (20 seconds by default, less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but before the row was marked processed, so notification handlers should be idempotent. `TryClaimAsync` must atomically lease a row across workers and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and `MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false` when the lease expired or another worker reclaimed the message. The store implementation owns persistence schema, attempt limits, and dead-letter policy.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.
@@ -495,7 +543,7 @@ Conflict validation can only see request types that have a closed registration; 
 Scanning is indiscriminate within the assemblies you register, so it is worth knowing exactly what is
 considered and what is skipped.
 
-**Registered:** closed types implementing `IRequestHandler<,>`, `INotificationHandler<>`,
+**Registered:** closed types implementing `IRequestHandler<,>`, `IStreamRequestHandler<,>`, `INotificationHandler<>`,
 `IPreRequestHandler<,>`, `IPostRequestHandler<,>`, or `IRequestExceptionHandler<,>`; open generic
 implementations of the same interfaces. A type implementing several of them is registered for each.
 
@@ -528,7 +576,34 @@ type another module excluded.
 
 
 ## Observability
-SimpleMediator keeps the core limited to the DI abstractions dependency; cross-cutting concerns like logging, metrics, tracing, and correlation IDs are implemented as ordinary pipeline behaviors. A timing + tracing behavior, for example:
+
+### Built-in Telemetry (`SimpleMediatorDiagnostics`)
+On `net8.0` and `net10.0`, SimpleMediator includes built-in, zero-dependency OpenTelemetry-compatible tracing and metrics via `SimpleMediatorDiagnostics`:
+
+- **`ActivitySource`**: `SimpleMediatorDiagnostics.ActivitySourceName` (`"SimpleMediator"`)
+- **`Meter`**: `SimpleMediatorDiagnostics.MeterName` (`"SimpleMediator"`)
+  - `simplemediator.request.duration` (`ms`, tagged with `mediator.request.type` and `mediator.status`)
+  - `simplemediator.notification.duration` (`ms`, tagged with `mediator.notification.type` and `mediator.status`)
+
+Enable it on `SimpleMediatorOptions` and subscribe with OpenTelemetry:
+
+```csharp
+services.AddSimpleMediator(options =>
+{
+    options.RegisterAssembly(typeof(Program).Assembly);
+    options.EnableTelemetry = true;
+});
+
+// With OpenTelemetry:
+// builder.Services.AddOpenTelemetry()
+//     .WithTracing(t => t.AddSource(SimpleMediatorDiagnostics.ActivitySourceName))
+//     .WithMetrics(m => m.AddMeter(SimpleMediatorDiagnostics.MeterName));
+```
+
+When `EnableTelemetry` is `false` (the default) or no listener is attached (`HasListeners()`), telemetry adds zero overhead and zero allocations.
+
+### Custom Pipeline Behaviors for Observability
+You can also implement custom logging, metrics, tracing, and correlation IDs as ordinary pipeline behaviors (`IPipelineBehavior<,>`, `IStreamPipelineBehavior<,>`, or `INotificationBehavior<>`):
 
 ```csharp
 public class TracingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
@@ -585,7 +660,7 @@ SimpleMediator has two composition roots with identical configuration and runtim
 |---|---|---|
 | Handler discovery | Assembly scanning at startup | At compile time |
 | Dispatch wrappers | `MakeGenericType` on first use | Pre-generated, closed types |
-| Open generics (handlers, behaviors) | Closed at runtime by DI / SimpleMediator | Closed at compile time for every request/notification the generator sees |
+| Open generics (handlers, behaviors) | Closed at runtime by DI / SimpleMediator | Closed at compile time for every request/stream/notification the generator sees |
 | Trimming / Native AOT | Not supported (`IL2026`/`IL3050` at `AddSimpleMediator`) | **Supported**: no trim/AOT warning, verified by a Native AOT binary in CI |
 
 ### Native AOT with the source generator
@@ -606,28 +681,43 @@ services.AddSimpleMediatorGenerated(options =>   // was: AddSimpleMediator
 
 Everything else — `DefaultLifetime`, `NotificationPublishStrategy`, `ValidateOnBuild`, assembly filters, behavior ordering, scopes, `ISender`/`IPublisher`/`IMediator` — works unchanged. The generator emits an `internal` `AddSimpleMediatorGenerated` into the project that references it, so reference the generator from the project that composes the container.
 
+#### Multi-Project Solutions with `internal` Handlers (`[assembly: GenerateSimpleMediatorModule]`)
+
+In Clean Architecture or Modular Monolith solutions, handlers in referenced domain/application class libraries are often declared `internal`. By default, a source generator running only in the host project cannot reference `internal` types of another assembly.
+
+Add the source generator package and `[assembly: GenerateSimpleMediatorModule]` to any referenced module project to emit a public module registration hook (`SimpleMediatorGeneratedModule_{ModuleName}.Populate(...)`) inside that assembly:
+
+```csharp
+// In MyCompany.Ordering.Application/AssemblyInfo.cs:
+using SimpleMediator;
+
+[assembly: GenerateSimpleMediatorModule("Ordering")]
+```
+
+When the host project calls `services.AddSimpleMediatorGenerated(...)`, its generator automatically discovers all referenced assemblies marked with `[GenerateSimpleMediatorModule]` and chains their `Populate` methods, registering their `internal` and `public` handlers without reflection or `InternalsVisibleTo`.
+
 What the generator sees, and therefore what works under AOT:
 
-- **Assemblies**: the current project, plus every assembly passed to `RegisterAssembly` as `typeof(T).Assembly`, `typeof(T).GetTypeInfo().Assembly` or `Assembly.GetExecutingAssembly()`. At runtime, handlers are registered only for assemblies passed to `RegisterAssembly`, in that order, and assembly filters receive the declared type (for an open-generic handler, its generic definition), exactly like scanning. Passing an assembly the generator could not scan throws at startup.
-- **Requests and notifications**: every concrete message type in a scanned assembly, every message named by a closed handler, and the argument type of every `Send`/`Publish` call in the project. Generic messages such as `Echo<int>` are known from the `Send(new Echo<int>(...))` call site.
-- **Open-generic handlers and behaviors** are closed for each known message that satisfies their constraints. Behaviors remain opt-in: only those passed to `AddBehavior` are registered.
+- **Assemblies**: the current project, any referenced assembly annotated with `[assembly: GenerateSimpleMediatorModule]`, plus every assembly passed to `RegisterAssembly` as `typeof(T).Assembly`, `typeof(T).GetTypeInfo().Assembly` or `Assembly.GetExecutingAssembly()`. At runtime, handlers are registered only for assemblies passed to `RegisterAssembly` (plus generated modules), in that order, and assembly filters receive the declared type (for an open-generic handler, its generic definition), exactly like scanning. Passing an assembly the generator could not scan throws at startup.
+- **Requests, streams, and notifications**: every concrete message type in a scanned assembly, every message named by a closed handler, and the argument type of every `Send`/`CreateStream`/`Publish` call in the project. Generic messages such as `Echo<int>` are known from the `Send(new Echo<int>(...))` call site.
+- **Open-generic handlers and behaviors** are closed for each known message that satisfies their constraints. Behaviors remain opt-in: only those passed to `AddBehavior`, `AddStreamBehavior`, or `AddNotificationBehavior` are registered.
 
 Limitations of generated mode:
 
-- A request or notification type that only exists at runtime (for example `Send(new Echo<T>(value))` inside a generic method) has no generated wrapper. Generated mode never falls back to reflection: the call fails with an exception that names the missing type (`RequestHandlerResolutionException` for requests, `InvalidOperationException` for notifications). Send the closed type somewhere the generator can see it.
-- Handlers must be accessible from the composing project: `public`, or `internal` in the same project. Private nested handlers are skipped with a warning; internal types of referenced assemblies are invisible to the generator.
+- A request, stream, or notification type that only exists at runtime (for example `Send(new Echo<T>(value))` inside a generic method) has no generated wrapper. Generated mode never falls back to reflection: the call fails with an exception that names the missing type (`RequestHandlerResolutionException` for requests/streams, `InvalidOperationException` for notifications). Send the closed type somewhere the generator can see it.
+- Handlers must be accessible from the project where their registration is generated: `public`, `internal` in the same project, or `internal` in a referenced project annotated with `[assembly: GenerateSimpleMediatorModule]`. Private nested handlers are skipped with a warning.
 - Open-generic request handlers that SimpleMediator closes itself in reflection mode (for example `EchoHandler<T> : IRequestHandler<Echo<T>, T>`) become ordinary closed DI registrations, so their lifetime is owned by Microsoft DI.
 - `new Mediator(serviceProvider)` takes its dispatch strategy from the container it is given, so it is AOT-safe on a container composed with `AddSimpleMediatorGenerated`. To register handlers by hand in an AOT application, call `services.AddSimpleMediatorGenerated()` without options: it registers the generated dispatch table and no handler. A provider with no SimpleMediator registration at all can only use reflection; under Native AOT the `Mediator` constructor rejects it with an `InvalidOperationException` that explains the fix, instead of failing later on the first value-type request.
 - Requires Roslyn 4.8 or later (.NET 8 SDK, Visual Studio 17.8). Generated code is C# 7.3 compatible.
 
-Generator diagnostics (reported only in projects that call `AddSimpleMediatorGenerated`):
+Generator diagnostics (reported only in projects that call `AddSimpleMediatorGenerated` or declare `[GenerateSimpleMediatorModule]`):
 
 | ID | Severity | Meaning |
 |---|---|---|
 | `SMG000` | Warning | The generator failed; no registrations were emitted |
 | `SMG001` | Warning | More than one handler for the same request (fine only if an assembly filter excludes all but one) |
 | `SMG002` | Warning | A handler, behavior or message is not accessible from generated code and was skipped |
-| `SMG003` | Warning | A `Send`/`Publish` argument type contains type parameters, so it cannot be pre-generated |
+| `SMG003` | Warning | A `Send`/`CreateStream`/`Publish` argument type contains type parameters, so it cannot be pre-generated |
 | `SMG004` | Info | An open-generic handler or behavior matched no known message |
 | `SMG005` | Warning | `AddBehavior` was not called with a `typeof(...)` expression |
 | `SMG006` | Warning | The `RegisterAssembly` argument cannot be resolved at compile time |
@@ -649,36 +739,33 @@ The package does not inject transitive global usings into consumer projects. Add
 ## Why SimpleMediator?
 
 SimpleMediator uses a **hybrid approach**:
-1. **Discovery**: Reflection is used once at startup to find handlers.
-2. **Wrapper creation**: The first time a request or notification type is used, SimpleMediator closes a generic wrapper type (`MakeGenericType`) and instantiates it once with `Activator.CreateInstance`; the instance is cached. Concurrent first use is coalesced so only one wrapper is created per cache key.
+1. **Discovery**: Reflection is used once at startup to find handlers (or at compile time via the Source Generator).
+2. **Wrapper creation**: The first time a request, stream, or notification type is used, SimpleMediator closes a generic wrapper type (`MakeGenericType`) and instantiates it once with `Activator.CreateInstance` (or uses the pre-generated wrapper); the instance is cached along with the `MediatorConfiguration` reference. Concurrent first use is coalesced so only one wrapper is created per cache key.
 3. **Execution**: Subsequent calls reuse the cached wrapper, which calls your handler through ordinary typed generic code, while handlers and pipeline services are resolved through Microsoft Dependency Injection on every call so lifetimes and scopes remain correct.
 
 ### What the performance actually consists of
 
 Per `Send`, on top of your handler's own work, SimpleMediator performs:
 
-- one bounded-cache lookup keyed by `(requestType, responseType)` — lock-free on the hot path;
-- `GetServices<IRequestHandler<,>>()` for handler selection plus one each for pre-handlers, post-handlers and behaviors: four enumerable resolutions, each materialising an array, plus a `GetService<MediatorConfiguration>()` and an open-generic plan lookup;
-- one handler delegate allocation plus one closure per behavior;
-- one `Order` snapshot and, only when registration order is not already correct, one sort;
-- the async state machines of the behavior chain.
+- one cache lookup keyed by `(requestType, responseType)` — lock-free on the hot path (with `MediatorConfiguration` already captured by the wrapper, avoiding any per-call `GetService<MediatorConfiguration>()` lookup);
+- `GetServices<IRequestHandler<,>>()` for handler selection;
+- **Fast path (no pre/post handlers or pipeline behaviors for `(TRequest, TResponse)`)**: after the first request probes the container once, subsequent requests skip `GetServices<IPreRequestHandler<,>>()`, `GetServices<IPostRequestHandler<,>>()` and `GetServices<IPipelineBehavior<,>>()` completely (0 array allocations, 0 extra DI lookups) and return the handler's `Task<TResponse>` directly without an `async` state machine when it completes synchronously;
+- **Pipeline path (when behaviors or pre/post handlers exist)**: resolves the registered behaviors/hooks, allocates one handler delegate plus one closure per behavior, snapshots `Order` (sorting only when registration order is not already sorted), and awaits the behavior chain.
 
-Resolving the mediator itself (it is transient) costs two more lookups: the configuration and, for the root guard, `IServiceScopeFactory`.
+Resolving the mediator itself (it is transient) costs two lookups: the configuration and, for the root guard, `IServiceScopeFactory`.
 
-The cached wrapper removes reflection from the per-call path, but the per-request DI resolutions and delegate allocations dominate. No comparative benchmark against other mediator libraries is published; measure with the suite above rather than assuming a number.
+The cached wrapper removes reflection from the per-call path. No comparative benchmark against other mediator libraries is published; measure with the suite above rather than assuming a number.
 
-The wrapper caches are **unbounded**: one small wrapper per request/response pair or notification type actually dispatched, which is a finite set. They live on the container's configuration singleton, never in a static, so they are released with the container — the same lifetime for which Microsoft DI itself retains every service type it has resolved. A plugin host that unloads a collectible `AssemblyLoadContext` must therefore dispose the container that dispatched that context's types, as it already must for Microsoft DI. (Before 4.0 these caches were bounded at 1024 entries with FIFO eviction, which made dispatch cost jump for applications with more distinct request types than that.) The open-generic resolution-plan cache remains bounded by `OpenGenericResolutionCacheCapacity`.
+The wrapper caches are **unbounded**: one small wrapper per request/response pair, stream type, or notification type actually dispatched, which is a finite set. They live on the container's configuration singleton, never in a static, so they are released with the container — the same lifetime for which Microsoft DI itself retains every service type it has resolved. A plugin host that unloads a collectible `AssemblyLoadContext` must therefore dispose the container that dispatched that context's types, as it already must for Microsoft DI. (Before 4.0 these caches were bounded at 1024 entries with FIFO eviction, which made dispatch cost jump for applications with more distinct request types than that.) The open-generic resolution-plan cache remains bounded by `OpenGenericResolutionCacheCapacity`.
 
 ## Known limitations
 
 - Native AOT and trimming require the source generator (`AddSimpleMediatorGenerated`); reflection-based `AddSimpleMediator` does not support them. See [AOT & Trimming](#aot--trimming) for the generated mode's own limits.
-- No `IStreamRequest` / `IAsyncEnumerable` request support.
 - No `IPipelineContext` equivalent, so there is no way to pass per-request services or arguments alongside a request; everything flows through the ambient `IServiceProvider` of the mediator's scope.
-- No handler decoration: one handler per request and no built-in decorator chain. Use `IPipelineBehavior<,>` for cross-cutting concerns.
+- No handler decoration: one handler per request and no built-in decorator chain. Use `IPipelineBehavior<,>` (or `IStreamPipelineBehavior<,>` / `INotificationBehavior<>`) for cross-cutting concerns.
 - Handler and notification matching is **exact**, not contravariant. A handler registered for a base request or notification does not receive derived ones, even though the interfaces are declared contravariant.
-- No per-request transaction or outbox; see [Partial commits](#exactly-what-reaches-an-exception-handler).
+- No built-in per-request database transaction; use a behavior that opens a transaction around `next(ct)` and pair it with `s4ndr0ne.SimpleMediator.Outbox` when you need atomic persistence and event publishing; see [Partial commits](#exactly-what-reaches-an-exception-handler).
 - Only Microsoft.Extensions.DependencyInjection is supported (see [Supported DI container](#supported-di-container)). The root-mediator guard is advisory and does not fire on other containers.
-- Notifications have no pipeline: behaviors, pre/post handlers and exception handlers apply to requests only.
 
 ## License
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

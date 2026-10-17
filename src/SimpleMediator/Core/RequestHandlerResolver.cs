@@ -8,7 +8,9 @@ namespace SimpleMediator.Core;
 
 internal static class RequestHandlerResolver
 {
-    public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(IServiceProvider serviceProvider)
+    public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(
+        IServiceProvider serviceProvider,
+        MediatorConfiguration? configuration = null)
         where TRequest : IRequest<TResponse>
     {
         // Avoid materializing the DI result with ToList(). Requests normally have one
@@ -42,7 +44,7 @@ internal static class RequestHandlerResolver
             }
         }
 
-        var configuration = serviceProvider.GetService<MediatorConfiguration>();
+        configuration ??= serviceProvider.GetService<MediatorConfiguration>();
         var openMatches = configuration is { CustomOpenGenericRequestHandlers.Count: > 0 }
             ? ResolveCustomOpenGeneric(configuration, typeof(TRequest), typeof(TResponse))
             : Array.Empty<OpenGenericHandlerFactory>();

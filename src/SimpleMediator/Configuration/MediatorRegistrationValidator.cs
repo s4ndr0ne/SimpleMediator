@@ -35,6 +35,21 @@ internal static class MediatorRegistrationValidator
             }
         }
 
+        var streamRequestHandlerGroups = services
+            .Where(descriptor => !descriptor.IsKeyedService &&
+                                 OpenGenericRegistrationRules.IsClosedStreamRequestHandler(descriptor.ServiceType))
+            .GroupBy(descriptor => descriptor.ServiceType)
+            .ToList();
+
+        foreach (var group in streamRequestHandlerGroups)
+        {
+            if (group.Count() > 1)
+            {
+                throw new Core.RequestHandlerResolutionException(
+                    $"Multiple stream request handlers registered for '{group.Key.FullName}'. A stream request can only have one handler.");
+            }
+        }
+
         ValidateRegistrationShape(services);
         ValidateScannedOpenGenericHandlerConflicts(services, requestHandlerGroups);
         ValidateNativeOpenGenericHandlers(services, requestHandlerGroups);
