@@ -6,14 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-18
+
 ### Added
-- Provider-agnostic transactional outbox package with scoped enqueue publisher, hosted dispatcher, configurable retry/lease settings, lease renewal with per-claim fencing tokens, and application-owned persistence/serialization contracts.
+- **Provider-agnostic transactional outbox package (`s4ndr0ne.SimpleMediator.Outbox`):** scoped `IOutboxPublisher`, hosted `OutboxDispatcherService`, application-owned persistence (`IOutboxStore`) and reflection-free serialization (`IOutboxSerializer` / `OutboxDispatchable<TNotification>`), configurable retry/lease settings (`OutboxOptions`), active lease renewal with per-claim fencing tokens (`OutboxLease`), immediate wakeup signaling (`IOutboxSignal`), and optional batch claiming (`ClaimFullBatch`) with bounded concurrency (`MaxDegreeOfParallelism`).
+- **Async streaming (`IStreamRequest<TResponse>`):** `ISender.CreateStream<TResponse>` returning `IAsyncEnumerable<TResponse>`, handled by `IStreamRequestHandler<TRequest, TResponse>` and wrapped by ordered `IStreamPipelineBehavior<TRequest, TResponse>` (`options.AddStreamBehavior`), with full Source Generator and Native AOT support.
+- **Notification middleware & custom publish strategies:** `INotificationBehavior<TNotification>` (`options.AddNotificationBehavior`) for cross-cutting notification pipelines, and `INotificationPublisher` to override the built-in `Sequential`/`Parallel` dispatch strategy via DI.
+- **Built-in OpenTelemetry diagnostics (`SimpleMediatorDiagnostics`):** opt-in `ActivitySource` (`"SimpleMediator"`) and `Meter` (`mediator.request.duration` and `mediator.notification.duration` histograms) enabled via `options.EnableTelemetry = true`, with zero overhead when disabled or unlistened.
+- **Multi-project source-generator modules (`[GenerateSimpleMediatorModule]`):** assembly-level attribute instructing `s4ndr0ne.SimpleMediator.SourceGenerator` to emit a public module registration helper so referenced assemblies can register `internal` handlers and behaviors without reflection.
 - NuGet consumer smoke coverage with an isolated package cache, and release-version validation for the outbox package.
 
+### Changed
+- **Fast-path dispatch & allocation optimizations:** `RequestHandlerPipeline`, `RequestHandlerWrapper`, and `NotificationHandlerWrapper` probe on first execution whether pre-handlers, post-handlers, or pipeline behaviors are registered and skip `GetServices<...>()` allocations and async state machines on subsequent calls when none exist; `BehaviorOrderCache` caches behavior ordering per closed pipeline.
+
 ### Fixed
-- The outbox dispatcher claims one message at a time so later messages do not lose their leases while waiting behind a slow notification handler; active leases are renewed with per-claim fencing tokens.
-- Dependency-resolution failures no longer terminate the dispatcher, and failures while marking a successfully published message as processed are distinguished from dispatch failures.
+- The outbox dispatcher claims one message at a time by default so later messages do not lose their leases while waiting behind a slow notification handler; active leases are renewed with per-claim fencing tokens.
+- Dependency-resolution failures no longer terminate the outbox dispatcher, and failures while marking a successfully published message as processed are distinguished from dispatch failures.
 - Repeated `AddSimpleMediatorOutbox` calls now compose through the Options pattern instead of mutating a shared instance; invalid dispatcher options surface as `OptionsValidationException` on resolution; retry tests compare timestamps captured at failure time instead of test completion time.
+- `MediatorRegistrationValidator` and `OpenGenericLifetimeStore` now ignore keyed service descriptors (`IsKeyedService`) when inspecting non-keyed handler and dependency registrations.
 
 ## [4.1.0] - 2026-09-26
 

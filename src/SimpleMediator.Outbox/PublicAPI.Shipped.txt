@@ -1,0 +1,55 @@
+#nullable enable
+SimpleMediator.Outbox.IOutboxDispatchable
+SimpleMediator.Outbox.IOutboxDispatchable.PublishAsync(SimpleMediator.Interfaces.IPublisher! publisher, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.IOutboxPublisher
+SimpleMediator.Outbox.IOutboxPublisher.EnqueueAsync<TNotification>(TNotification notification, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.IOutboxSerializer
+SimpleMediator.Outbox.IOutboxSerializer.Deserialize(SimpleMediator.Outbox.OutboxMessage! message) -> SimpleMediator.Outbox.IOutboxDispatchable!
+SimpleMediator.Outbox.IOutboxSerializer.Serialize(SimpleMediator.Interfaces.INotification! notification, System.Guid messageId, System.DateTimeOffset occurredAtUtc) -> SimpleMediator.Outbox.OutboxMessage!
+SimpleMediator.Outbox.IOutboxSignal
+SimpleMediator.Outbox.IOutboxSignal.Pulse() -> void
+SimpleMediator.Outbox.IOutboxSignal.WaitAsync(System.TimeSpan timeout, System.TimeProvider! timeProvider, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.IOutboxStore
+SimpleMediator.Outbox.IOutboxStore.ClaimBatchAsync(int batchSize, System.DateTimeOffset nowUtc, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<SimpleMediator.Outbox.OutboxLease!>!>!
+SimpleMediator.Outbox.IOutboxStore.EnqueueAsync(SimpleMediator.Outbox.OutboxMessage! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.IOutboxStore.MarkFailedAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset retryAtUtc, string! error, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.IOutboxStore.MarkProcessedAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset processedAtUtc, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.IOutboxStore.RenewLeaseAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset nowUtc, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.OutboxDispatchable<TNotification>
+SimpleMediator.Outbox.OutboxDispatchable<TNotification>.Notification.get -> TNotification
+SimpleMediator.Outbox.OutboxDispatchable<TNotification>.OutboxDispatchable(TNotification notification) -> void
+SimpleMediator.Outbox.OutboxDispatchable<TNotification>.PublishAsync(SimpleMediator.Interfaces.IPublisher! publisher, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.OutboxLease
+SimpleMediator.Outbox.OutboxLease.LeaseToken.get -> System.Guid
+SimpleMediator.Outbox.OutboxLease.LeaseToken.init -> void
+SimpleMediator.Outbox.OutboxLease.Message.get -> SimpleMediator.Outbox.OutboxMessage!
+SimpleMediator.Outbox.OutboxLease.Message.init -> void
+SimpleMediator.Outbox.OutboxLease.OutboxLease(SimpleMediator.Outbox.OutboxMessage! Message, System.Guid LeaseToken) -> void
+SimpleMediator.Outbox.OutboxMessage
+SimpleMediator.Outbox.OutboxMessage.Id.get -> System.Guid
+SimpleMediator.Outbox.OutboxMessage.Id.init -> void
+SimpleMediator.Outbox.OutboxMessage.OccurredAtUtc.get -> System.DateTimeOffset
+SimpleMediator.Outbox.OutboxMessage.OccurredAtUtc.init -> void
+SimpleMediator.Outbox.OutboxMessage.OutboxMessage(System.Guid Id, string! Type, string! Payload, System.DateTimeOffset OccurredAtUtc) -> void
+SimpleMediator.Outbox.OutboxMessage.Payload.get -> string!
+SimpleMediator.Outbox.OutboxMessage.Payload.init -> void
+SimpleMediator.Outbox.OutboxMessage.Type.get -> string!
+SimpleMediator.Outbox.OutboxMessage.Type.init -> void
+SimpleMediator.Outbox.OutboxOptions
+SimpleMediator.Outbox.OutboxOptions.BatchSize.get -> int
+SimpleMediator.Outbox.OutboxOptions.BatchSize.set -> void
+SimpleMediator.Outbox.OutboxOptions.ClaimFullBatch.get -> bool
+SimpleMediator.Outbox.OutboxOptions.ClaimFullBatch.set -> void
+SimpleMediator.Outbox.OutboxOptions.LeaseDuration.get -> System.TimeSpan
+SimpleMediator.Outbox.OutboxOptions.LeaseDuration.set -> void
+SimpleMediator.Outbox.OutboxOptions.LeaseRenewalInterval.get -> System.TimeSpan
+SimpleMediator.Outbox.OutboxOptions.LeaseRenewalInterval.set -> void
+SimpleMediator.Outbox.OutboxOptions.MaxDegreeOfParallelism.get -> int
+SimpleMediator.Outbox.OutboxOptions.MaxDegreeOfParallelism.set -> void
+SimpleMediator.Outbox.OutboxOptions.OutboxOptions() -> void
+SimpleMediator.Outbox.OutboxOptions.PollingInterval.get -> System.TimeSpan
+SimpleMediator.Outbox.OutboxOptions.PollingInterval.set -> void
+SimpleMediator.Outbox.OutboxOptions.RetryDelay.get -> System.TimeSpan
+SimpleMediator.Outbox.OutboxOptions.RetryDelay.set -> void
+SimpleMediator.Outbox.OutboxServiceCollectionExtensions
+static SimpleMediator.Outbox.OutboxServiceCollectionExtensions.AddSimpleMediatorOutbox(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.Outbox.OutboxOptions!>? configure = null) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
