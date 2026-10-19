@@ -8,7 +8,7 @@
   <ItemGroup>
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.2" />
     <!-- netstandard2.0 only: IAsyncDisposable and ValueTask for the public surface. -->
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.13" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
     <!-- Tests and tooling (BenchmarkDotNet needs >= 4.14). The source generator compiles against an
@@ -17,7 +17,7 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="3.3.4" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
     <!-- Latest 8.0 patch. The implementation packages stopped at 8.0.1. -->
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.13" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
