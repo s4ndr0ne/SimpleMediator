@@ -25,6 +25,14 @@ SimpleMediator.Outbox.OutboxLease.LeaseToken.init -> void
 SimpleMediator.Outbox.OutboxLease.Message.get -> SimpleMediator.Outbox.OutboxMessage!
 SimpleMediator.Outbox.OutboxLease.Message.init -> void
 SimpleMediator.Outbox.OutboxLease.OutboxLease(SimpleMediator.Outbox.OutboxMessage! Message, System.Guid LeaseToken) -> void
+SimpleMediator.Outbox.OutboxLease.Deconstruct(out SimpleMediator.Outbox.OutboxMessage! Message, out System.Guid LeaseToken) -> void
+SimpleMediator.Outbox.OutboxLease.Equals(SimpleMediator.Outbox.OutboxLease? other) -> bool
+SimpleMediator.Outbox.OutboxLease.<Clone>$() -> SimpleMediator.Outbox.OutboxLease!
+override SimpleMediator.Outbox.OutboxLease.Equals(object? obj) -> bool
+override SimpleMediator.Outbox.OutboxLease.GetHashCode() -> int
+override SimpleMediator.Outbox.OutboxLease.ToString() -> string!
+static SimpleMediator.Outbox.OutboxLease.operator !=(SimpleMediator.Outbox.OutboxLease? left, SimpleMediator.Outbox.OutboxLease? right) -> bool
+static SimpleMediator.Outbox.OutboxLease.operator ==(SimpleMediator.Outbox.OutboxLease? left, SimpleMediator.Outbox.OutboxLease? right) -> bool
 SimpleMediator.Outbox.OutboxMessage
 SimpleMediator.Outbox.OutboxMessage.Id.get -> System.Guid
 SimpleMediator.Outbox.OutboxMessage.Id.init -> void
@@ -35,6 +43,14 @@ SimpleMediator.Outbox.OutboxMessage.Payload.get -> string!
 SimpleMediator.Outbox.OutboxMessage.Payload.init -> void
 SimpleMediator.Outbox.OutboxMessage.Type.get -> string!
 SimpleMediator.Outbox.OutboxMessage.Type.init -> void
+SimpleMediator.Outbox.OutboxMessage.Deconstruct(out System.Guid Id, out string! Type, out string! Payload, out System.DateTimeOffset OccurredAtUtc) -> void
+SimpleMediator.Outbox.OutboxMessage.Equals(SimpleMediator.Outbox.OutboxMessage? other) -> bool
+SimpleMediator.Outbox.OutboxMessage.<Clone>$() -> SimpleMediator.Outbox.OutboxMessage!
+override SimpleMediator.Outbox.OutboxMessage.Equals(object? obj) -> bool
+override SimpleMediator.Outbox.OutboxMessage.GetHashCode() -> int
+override SimpleMediator.Outbox.OutboxMessage.ToString() -> string!
+static SimpleMediator.Outbox.OutboxMessage.operator !=(SimpleMediator.Outbox.OutboxMessage? left, SimpleMediator.Outbox.OutboxMessage? right) -> bool
+static SimpleMediator.Outbox.OutboxMessage.operator ==(SimpleMediator.Outbox.OutboxMessage? left, SimpleMediator.Outbox.OutboxMessage? right) -> bool
 SimpleMediator.Outbox.OutboxOptions
 SimpleMediator.Outbox.OutboxOptions.BatchSize.get -> int
 SimpleMediator.Outbox.OutboxOptions.BatchSize.set -> void
