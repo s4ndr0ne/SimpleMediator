@@ -58,6 +58,7 @@ SimpleMediator.Interfaces.RequestHandler<TRequest>
 SimpleMediator.Interfaces.RequestHandler<TRequest>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<SimpleMediator.Interfaces.Unit>!
 SimpleMediator.Interfaces.RequestHandler<TRequest>.RequestHandler() -> void
 SimpleMediator.Interfaces.RequestHandlerDelegate<TResponse>
+virtual SimpleMediator.Interfaces.RequestHandlerDelegate<TResponse>.Invoke(System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<TResponse>!
 SimpleMediator.Interfaces.Unit
 SimpleMediator.Interfaces.Unit.Equals(SimpleMediator.Interfaces.Unit other) -> bool
 SimpleMediator.Interfaces.Unit.Unit() -> void
@@ -109,7 +110,9 @@ SimpleMediator.Interfaces.IStreamRequest<TResponse>
 SimpleMediator.Interfaces.IStreamRequestHandler<TRequest, TResponse>
 SimpleMediator.Interfaces.IStreamRequestHandler<TRequest, TResponse>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
 SimpleMediator.Interfaces.NotificationHandlerDelegate
+virtual SimpleMediator.Interfaces.NotificationHandlerDelegate.Invoke(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
 SimpleMediator.Interfaces.StreamHandlerDelegate<TResponse>
+virtual SimpleMediator.Interfaces.StreamHandlerDelegate<TResponse>.Invoke() -> System.Collections.Generic.IAsyncEnumerable<TResponse>!
 SimpleMediator.SimpleMediatorDiagnostics
 SimpleMediator.SimpleMediatorOptions.AddNotificationBehavior(System.Type! behaviorType) -> SimpleMediator.SimpleMediatorOptions!
 SimpleMediator.SimpleMediatorOptions.AddStreamBehavior(System.Type! behaviorType) -> SimpleMediator.SimpleMediatorOptions!
