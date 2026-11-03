@@ -72,8 +72,9 @@ internal static class RequestHandlerPipeline
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
-        foreach (var pre in preHandlers)
+        for (var i = 0; i < preHandlers.Count; i++)
         {
+            var pre = preHandlers[i];
             var preTask = pre.Handle(request, cancellationToken);
             if (preTask is null)
             {
@@ -91,8 +92,9 @@ internal static class RequestHandlerPipeline
 
         var result = await handlerTask.ConfigureAwait(false);
 
-        foreach (var post in postHandlers)
+        for (var i = 0; i < postHandlers.Count; i++)
         {
+            var post = postHandlers[i];
             var postTask = post.Handle(request, result, cancellationToken);
             if (postTask is null)
             {
@@ -115,43 +117,16 @@ internal static class RequestHandlerPipeline
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
-        RequestHandlerDelegate<TResponse> handlerDelegate = async ct =>
-        {
-            foreach (var pre in preHandlers)
-            {
-                var preTask = pre.Handle(request, ct);
-                if (preTask is null)
-                {
-                    throw NullTaskException(pre);
-                }
+        // When there are no pre- or post-handlers (the common case), the innermost delegate calls
+        // the request handler directly without allocating an async state machine of its own.
+        RequestHandlerDelegate<TResponse> aggregate = preHandlers.Count == 0 && postHandlers.Count == 0
+            ? ct => handler.Handle(request, ct) ?? throw NullTaskException(handler)
+            : ct => ExecuteWithoutBehaviors(request, handler, preHandlers, postHandlers, ct);
 
-                await preTask.ConfigureAwait(false);
-            }
-
-            var resultTask = handler.Handle(request, ct);
-            if (resultTask is null)
-            {
-                throw NullTaskException(handler);
-            }
-
-            var result = await resultTask.ConfigureAwait(false);
-
-            foreach (var post in postHandlers)
-            {
-                var postTask = post.Handle(request, result, ct);
-                if (postTask is null)
-                {
-                    throw NullTaskException(post);
-                }
-
-                await postTask.ConfigureAwait(false);
-            }
-
-            return result;
-        };
-
-        var aggregate = handlerDelegate;
-        for (var index = 0; index < behaviorOrder.Length; index++)
+        // Wrap all but the outermost behavior in delegates; invoke the outermost behavior directly
+        // to save one closure and one RequestHandlerDelegate allocation on every request.
+        var lastIndex = behaviorOrder.Length - 1;
+        for (var index = 0; index < lastIndex; index++)
         {
             var behavior = behaviors[behaviorOrder[index]];
             var next = aggregate;
@@ -163,9 +138,8 @@ internal static class RequestHandlerPipeline
             aggregate = ct => behavior.Handle(request, next, ct) ?? throw NullTaskException(behavior);
         }
 
-        // Hand the chain's task back directly: the wrapper awaits it and owns the single
-        // try/catch, so this method needs no state machine to do the awaiting itself.
-        return aggregate(cancellationToken);
+        var outermost = behaviors[behaviorOrder[lastIndex]];
+        return outermost.Handle(request, aggregate, cancellationToken) ?? throw NullTaskException(outermost);
     }
 
     /// <summary>

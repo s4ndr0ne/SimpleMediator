@@ -144,9 +144,21 @@ public class Mediator : IMediator
     {
         ThrowHelper.ThrowIfNull(notification);
 
+        if (typeof(TNotification).IsValueType)
+        {
+            var typedHandler = (NotificationHandlerWrapperImpl<TNotification>)_notificationHandlerWrappers.GetOrAdd(
+                typeof(TNotification),
+                _notificationWrapperFactory);
+            return typedHandler.HandleTyped(notification, _serviceProvider, cancellationToken);
+        }
+
         var notificationType = notification.GetType();
 
         var handler = (NotificationHandlerWrapper)_notificationHandlerWrappers.GetOrAdd(notificationType, _notificationWrapperFactory);
+        if (ReferenceEquals(notificationType, typeof(TNotification)))
+        {
+            return ((NotificationHandlerWrapperImpl<TNotification>)handler).HandleTyped(notification, _serviceProvider, cancellationToken);
+        }
 
         return handler.Handle(notification, _serviceProvider, cancellationToken);
     }

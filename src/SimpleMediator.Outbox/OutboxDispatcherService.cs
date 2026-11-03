@@ -198,9 +198,6 @@ internal sealed class OutboxDispatcherService(
         IPublisher publisher,
         CancellationToken stoppingToken)
     {
-        using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        using var dispatchCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        var heartbeat = RenewLeaseUntilStoppedAsync(lease, heartbeatStop.Token);
         var ownsLease = true;
         Exception? dispatchFailure = null;
 
@@ -208,11 +205,30 @@ internal sealed class OutboxDispatcherService(
         {
             var dispatchable = serializer.Deserialize(lease.Message)
                 ?? throw new InvalidOperationException("The outbox serializer returned null.");
+
+            using var dispatchCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             var publishTask = dispatchable.PublishAsync(publisher, dispatchCancellation.Token);
-            if (await Task.WhenAny(publishTask, heartbeat).ConfigureAwait(false) == heartbeat
-                && !await heartbeat.ConfigureAwait(false))
+
+            // Avoid allocating a second linked CancellationTokenSource, the heartbeat timer, and
+            // Task.WhenAny when the notification handler completes synchronously (the common case
+            // for in-process handlers).
+            if (!publishTask.IsCompleted)
             {
-                await dispatchCancellation.CancelAsync().ConfigureAwait(false);
+                using var heartbeatStop = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var heartbeat = RenewLeaseUntilStoppedAsync(lease, heartbeatStop.Token);
+                try
+                {
+                    if (await Task.WhenAny(publishTask, heartbeat).ConfigureAwait(false) == heartbeat
+                        && !await heartbeat.ConfigureAwait(false))
+                    {
+                        await dispatchCancellation.CancelAsync().ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    await heartbeatStop.CancelAsync().ConfigureAwait(false);
+                    ownsLease = await heartbeat.ConfigureAwait(false);
+                }
             }
 
             await publishTask.ConfigureAwait(false);
@@ -224,11 +240,6 @@ internal sealed class OutboxDispatcherService(
         catch (Exception exception)
         {
             dispatchFailure = exception;
-        }
-        finally
-        {
-            await heartbeatStop.CancelAsync().ConfigureAwait(false);
-            ownsLease = await heartbeat.ConfigureAwait(false);
         }
 
         if (!ownsLease)

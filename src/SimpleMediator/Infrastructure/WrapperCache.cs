@@ -15,14 +15,25 @@ namespace SimpleMediator.Infrastructure;
 /// </remarks>
 internal sealed class WrapperCache<TKey> where TKey : notnull
 {
+    private readonly ConcurrentDictionary<TKey, object> _resolved = new();
     private readonly ConcurrentDictionary<TKey, Lazy<object>> _entries = new();
 
-    internal int Count => _entries.Count;
+    internal int Count => _resolved.Count;
 
     public object GetOrAdd(TKey key, Func<TKey, object> factory)
     {
         ThrowHelper.ThrowIfNull(factory);
 
+        if (_resolved.TryGetValue(key, out var resolved))
+        {
+            return resolved;
+        }
+
+        return GetOrAddSlow(key, factory);
+    }
+
+    private object GetOrAddSlow(TKey key, Func<TKey, object> factory)
+    {
         if (!_entries.TryGetValue(key, out var entry))
         {
             // Lazy keeps concurrent first use single-flight: only the winning entry's factory runs.
@@ -40,7 +51,9 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
 
         try
         {
-            return entry.Value;
+            var value = entry.Value;
+            _ = _resolved.TryAdd(key, value);
+            return value;
         }
         catch
         {

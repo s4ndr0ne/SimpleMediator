@@ -64,8 +64,9 @@ public static class ServiceCollectionExtensions
     {
         AddMediatorServices(services);
 
-        var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options);
-        RegisterBehaviors(services, options);
+        var registrationIndex = new ServiceRegistrationIndex(services);
+        var customOpenGenericRequestHandlers = MediatorAssemblyScanner.ScanAndRegister(services, options, registrationIndex);
+        RegisterBehaviors(options, registrationIndex);
         var configuration = MergeConfiguration(services, options, customOpenGenericRequestHandlers, generated: null);
 
         if (configuration.ValidationRequested)
@@ -116,19 +117,19 @@ public static class ServiceCollectionExtensions
     }
 
     [RequiresUnreferencedCode(ReflectionMessage)]
-    private static void RegisterBehaviors(IServiceCollection services, SimpleMediatorOptions options)
+    private static void RegisterBehaviors(SimpleMediatorOptions options, ServiceRegistrationIndex registrationIndex)
     {
         // Order determines the primary execution sequence. Behaviors with equal Order run
         // in registration order (FIFO): the first registered behavior is outermost;
         // values are evaluated by the wrapper for each request.
-        RegisterBehaviorGroup(services, options.Behaviors, typeof(IPipelineBehavior<,>), options.DefaultLifetime);
-        RegisterBehaviorGroup(services, options.StreamBehaviors, typeof(IStreamPipelineBehavior<,>), options.DefaultLifetime);
-        RegisterBehaviorGroup(services, options.NotificationBehaviors, typeof(INotificationBehavior<>), options.DefaultLifetime);
+        RegisterBehaviorGroup(registrationIndex, options.Behaviors, typeof(IPipelineBehavior<,>), options.DefaultLifetime);
+        RegisterBehaviorGroup(registrationIndex, options.StreamBehaviors, typeof(IStreamPipelineBehavior<,>), options.DefaultLifetime);
+        RegisterBehaviorGroup(registrationIndex, options.NotificationBehaviors, typeof(INotificationBehavior<>), options.DefaultLifetime);
     }
 
     [RequiresUnreferencedCode(ReflectionMessage)]
     private static void RegisterBehaviorGroup(
-        IServiceCollection services,
+        ServiceRegistrationIndex registrationIndex,
         List<Type> behaviorTypes,
         Type serviceDefinition,
         ServiceLifetime lifetime)
@@ -137,25 +138,24 @@ public static class ServiceCollectionExtensions
         {
             if (behaviorType.IsGenericTypeDefinition)
             {
-                AddBehavior(services, serviceDefinition, behaviorType, lifetime);
+                AddBehavior(registrationIndex, serviceDefinition, behaviorType, lifetime);
                 continue;
             }
 
-            var closedInterfaces = behaviorType.GetInterfaces()
-                .Where(implementedInterface =>
-                    implementedInterface.IsGenericType &&
-                    implementedInterface.GetGenericTypeDefinition() == serviceDefinition);
-
-            foreach (var closedInterface in closedInterfaces)
+            foreach (var implementedInterface in behaviorType.GetInterfaces())
             {
-                AddBehavior(services, closedInterface, behaviorType, lifetime);
+                if (implementedInterface.IsGenericType &&
+                    implementedInterface.GetGenericTypeDefinition() == serviceDefinition)
+                {
+                    AddBehavior(registrationIndex, implementedInterface, behaviorType, lifetime);
+                }
             }
         }
     }
 
     [RequiresUnreferencedCode(ReflectionMessage)]
-    private static void AddBehavior(IServiceCollection services, Type serviceType, Type behaviorType, ServiceLifetime lifetime)
-        => AddBehaviorDescriptor(services, new ServiceDescriptor(serviceType, behaviorType, lifetime));
+    private static void AddBehavior(ServiceRegistrationIndex registrationIndex, Type serviceType, Type behaviorType, ServiceLifetime lifetime)
+        => registrationIndex.AddBehaviorDescriptor(new ServiceDescriptor(serviceType, behaviorType, lifetime));
 
     internal static void AddBehaviorDescriptor(IServiceCollection services, ServiceDescriptor behavior)
     {
@@ -167,14 +167,110 @@ public static class ServiceCollectionExtensions
 
         if (existing is not null && existing.Lifetime != behavior.Lifetime)
         {
-            throw new InvalidOperationException(
-                $"Pipeline behavior '{behavior.ImplementationType?.FullName}' is registered for '{behavior.ServiceType.FullName}' with conflicting " +
-                $"lifetimes ({existing.Lifetime} and {behavior.Lifetime}). A behavior can only be registered once per " +
-                "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
-                "configuration.");
+            ThrowConflictingBehaviorLifetime(behavior, existing.Lifetime);
         }
 
         services.TryAddEnumerable(behavior);
+    }
+
+    internal static void ThrowConflictingBehaviorLifetime(ServiceDescriptor behavior, ServiceLifetime existingLifetime)
+        => throw new InvalidOperationException(
+            $"Pipeline behavior '{behavior.ImplementationType?.FullName}' is registered for '{behavior.ServiceType.FullName}' with conflicting " +
+            $"lifetimes ({existingLifetime} and {behavior.Lifetime}). A behavior can only be registered once per " +
+            "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
+            "configuration.");
+
+    internal readonly struct ServiceRegistrationIndex
+    {
+        private readonly IServiceCollection _services;
+        private readonly Dictionary<(Type ServiceType, Type ImplementationType), ServiceLifetime> _typedDescriptors;
+
+        public ServiceRegistrationIndex(IServiceCollection services)
+        {
+            _services = services;
+            _typedDescriptors = new Dictionary<(Type ServiceType, Type ImplementationType), ServiceLifetime>(services.Count);
+            for (var i = 0; i < services.Count; i++)
+            {
+                var descriptor = services[i];
+                if (descriptor.IsKeyedService)
+                {
+                    continue;
+                }
+
+                var implementationType = GetImplementationType(descriptor);
+                if (implementationType is not null)
+                {
+                    _typedDescriptors[(descriptor.ServiceType, implementationType)] = descriptor.Lifetime;
+                }
+            }
+        }
+
+        public void TryAddEnumerable(ServiceDescriptor descriptor)
+        {
+            var implementationType = descriptor.ImplementationType;
+            if (implementationType is null || descriptor.IsKeyedService)
+            {
+                _services.TryAddEnumerable(descriptor);
+                return;
+            }
+
+            var key = (descriptor.ServiceType, implementationType);
+            if (_typedDescriptors.ContainsKey(key))
+            {
+                return;
+            }
+
+            _typedDescriptors.Add(key, descriptor.Lifetime);
+            _services.Add(descriptor);
+        }
+
+        public void AddBehaviorDescriptor(ServiceDescriptor behavior)
+        {
+            var implementationType = behavior.ImplementationType;
+            if (implementationType is not null && !behavior.IsKeyedService)
+            {
+                var key = (behavior.ServiceType, implementationType);
+                if (_typedDescriptors.TryGetValue(key, out var existingLifetime))
+                {
+                    if (existingLifetime != behavior.Lifetime)
+                    {
+                        ThrowConflictingBehaviorLifetime(behavior, existingLifetime);
+                    }
+
+                    return;
+                }
+
+                _typedDescriptors.Add(key, behavior.Lifetime);
+                _services.Add(behavior);
+                return;
+            }
+
+            ServiceCollectionExtensions.AddBehaviorDescriptor(_services, behavior);
+        }
+
+        private static Type? GetImplementationType(ServiceDescriptor descriptor)
+        {
+            if (descriptor.ImplementationType is not null)
+            {
+                return descriptor.ImplementationType;
+            }
+
+            if (descriptor.ImplementationInstance is not null)
+            {
+                return descriptor.ImplementationInstance.GetType();
+            }
+
+            if (descriptor.ImplementationFactory is not null)
+            {
+                var typeArguments = descriptor.ImplementationFactory.GetType().GenericTypeArguments;
+                if (typeArguments.Length == 2)
+                {
+                    return typeArguments[1];
+                }
+            }
+
+            return null;
+        }
     }
 
     internal static void ValidateOptions(SimpleMediatorOptions options)

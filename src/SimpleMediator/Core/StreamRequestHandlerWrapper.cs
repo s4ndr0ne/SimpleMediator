@@ -16,6 +16,7 @@ internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : Str
 {
     private readonly MediatorConfiguration? _configuration;
     private readonly BehaviorOrderCache _behaviorOrder = new();
+    private int _handlerResolutionState;
     private volatile int _behaviorState;
 
     public StreamRequestHandlerWrapperImpl()
@@ -31,7 +32,10 @@ internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : Str
     {
         var typedRequest = (TRequest)request;
         var configuration = _configuration ?? serviceProvider.GetService<MediatorConfiguration>();
-        var handlerLease = StreamRequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, configuration);
+        var handlerLease = StreamRequestHandlerResolver.Resolve<TRequest, TResponse>(
+            serviceProvider,
+            configuration,
+            ref _handlerResolutionState);
 
         IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>> behaviorList = Array.Empty<IStreamPipelineBehavior<TRequest, TResponse>>();
         if (_behaviorState != 1)
@@ -45,6 +49,12 @@ internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : Str
             }
         }
 
+        if (behaviorList.Count == 0 && !handlerLease.HasOwnedInstance)
+        {
+            return handlerLease.Handler.Handle(typedRequest, cancellationToken)
+                   ?? throw NullStreamException(handlerLease.Handler);
+        }
+
         StreamHandlerDelegate<TResponse> handlerDelegate = () =>
             handlerLease.Handler.Handle(typedRequest, cancellationToken)
             ?? throw NullStreamException(handlerLease.Handler);
@@ -53,6 +63,22 @@ internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : Str
         if (behaviorList.Count > 0)
         {
             var order = _behaviorOrder.GetStreamOrder(behaviorList);
+            if (!handlerLease.HasOwnedInstance)
+            {
+                var lastIndex = order.Length - 1;
+                for (var index = 0; index < lastIndex; index++)
+                {
+                    var behavior = behaviorList[order[index]];
+                    var next = aggregate;
+                    aggregate = () => behavior.Handle(typedRequest, next, cancellationToken)
+                                      ?? throw NullStreamException(behavior);
+                }
+
+                var outermost = behaviorList[order[lastIndex]];
+                return outermost.Handle(typedRequest, aggregate, cancellationToken)
+                       ?? throw NullStreamException(outermost);
+            }
+
             for (var index = 0; index < order.Length; index++)
             {
                 var behavior = behaviorList[order[index]];
@@ -60,11 +86,6 @@ internal sealed class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : Str
                 aggregate = () => behavior.Handle(typedRequest, next, cancellationToken)
                                   ?? throw NullStreamException(behavior);
             }
-        }
-
-        if (!handlerLease.HasOwnedInstance)
-        {
-            return aggregate();
         }
 
         return IterateWithLeaseDisposal(aggregate, handlerLease, cancellationToken);
@@ -100,6 +121,25 @@ internal static class StreamRequestHandlerResolver
         MediatorConfiguration? configuration)
         where TRequest : IStreamRequest<TResponse>
     {
+        var state = 0;
+        return Resolve<TRequest, TResponse>(serviceProvider, configuration, ref state);
+    }
+
+    public static StreamHandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(
+        IServiceProvider serviceProvider,
+        MediatorConfiguration? configuration,
+        ref int resolutionState)
+        where TRequest : IStreamRequest<TResponse>
+    {
+        if (Volatile.Read(ref resolutionState) == 1)
+        {
+            var singleHandler = serviceProvider.GetService<IStreamRequestHandler<TRequest, TResponse>>();
+            if (singleHandler is not null)
+            {
+                return new StreamHandlerLease<TRequest, TResponse>(singleHandler);
+            }
+        }
+
         IStreamRequestHandler<TRequest, TResponse>? closedHandler = null;
         var closedHandlerCount = 0;
         var candidates = serviceProvider.GetServices<IStreamRequestHandler<TRequest, TResponse>>();
@@ -134,6 +174,11 @@ internal static class StreamRequestHandlerResolver
             throw new RequestHandlerResolutionException(
                 $"Multiple stream request handlers registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'. " +
                 "A stream request can only have one handler.");
+        }
+
+        if (Volatile.Read(ref resolutionState) == 0)
+        {
+            Volatile.Write(ref resolutionState, 1);
         }
 
         return new StreamHandlerLease<TRequest, TResponse>(closedHandler!);

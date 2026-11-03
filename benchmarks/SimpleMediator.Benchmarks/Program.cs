@@ -16,11 +16,15 @@ public class MediatorBenchmarks
 {
     private ServiceProvider _provider = null!;
     private ServiceProvider _parallelProvider = null!;
+    private ServiceProvider _behavioralProvider = null!;
     private IServiceScope _scope = null!;
     private IServiceScope _parallelScope = null!;
+    private IServiceScope _behavioralScope = null!;
     private IMediator _mediator = null!;
     private IMediator _parallelMediator = null!;
+    private IMediator _behavioralMediator = null!;
     private IRequestHandler<PingRequest, int> _directHandler = null!;
+    private PingHandler _asyncHandler = null!;
     private PingRequest _request = null!;
 
     [GlobalSetup]
@@ -43,6 +47,19 @@ public class MediatorBenchmarks
         _parallelScope = _parallelProvider.CreateScope();
         _parallelMediator = _parallelScope.ServiceProvider.GetRequiredService<IMediator>();
 
+        var behavioralServices = new ServiceCollection();
+        behavioralServices.AddSimpleMediator(options =>
+        {
+            options.RegisterAssembly(typeof(PingHandler).Assembly);
+            options.AddBehavior(typeof(CountingBehaviorOne));
+            options.AddBehavior(typeof(CountingBehaviorTwo));
+            options.AddBehavior(typeof(CountingBehaviorThree));
+        });
+        _behavioralProvider = behavioralServices.BuildServiceProvider();
+        _behavioralScope = _behavioralProvider.CreateScope();
+        _behavioralMediator = _behavioralScope.ServiceProvider.GetRequiredService<IMediator>();
+        _asyncHandler = new PingHandler();
+
         _request = new PingRequest(42);
     }
 
@@ -51,8 +68,10 @@ public class MediatorBenchmarks
     {
         _scope.Dispose();
         _parallelScope.Dispose();
+        _behavioralScope.Dispose();
         _provider.Dispose();
         _parallelProvider.Dispose();
+        _behavioralProvider.Dispose();
     }
 
     [Benchmark(Baseline = true)]
@@ -72,25 +91,6 @@ public class MediatorBenchmarks
 
     [Benchmark]
     public Task PublishParallel() => _parallelMediator.Publish(new PingNotification(42));
-
-    private IMediator _behavioralMediator = null!;
-    private PingHandler _asyncHandler = null!;
-
-    [GlobalSetup(Target = nameof(MediatorSend_WithBehaviors))]
-    public void SetupBehaviors()
-    {
-        var services = new ServiceCollection();
-        services.AddSimpleMediator(options =>
-        {
-            options.RegisterAssembly(typeof(PingHandler).Assembly);
-            options.AddBehavior(typeof(CountingBehaviorOne));
-            options.AddBehavior(typeof(CountingBehaviorTwo));
-            options.AddBehavior(typeof(CountingBehaviorThree));
-        });
-        var provider = services.BuildServiceProvider();
-        _behavioralMediator = provider.CreateScope().ServiceProvider.GetRequiredService<IMediator>();
-        _asyncHandler = new PingHandler();
-    }
 }
 
 public sealed record PingRequest(int Value) : IRequest<int>;

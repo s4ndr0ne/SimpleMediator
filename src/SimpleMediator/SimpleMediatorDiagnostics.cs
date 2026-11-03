@@ -41,10 +41,22 @@ public static class SimpleMediatorDiagnostics
     internal static bool HasTelemetryListeners()
         => ActivitySource.HasListeners() || RequestDuration.Enabled || NotificationDuration.Enabled;
 
+    private static readonly KeyValuePair<string, object?> StatusOkTag = new("mediator.status", "ok");
+    private static readonly KeyValuePair<string, object?> StatusCanceledTag = new("mediator.status", "canceled");
+    private static readonly KeyValuePair<string, object?> StatusErrorTag = new("mediator.status", "error");
+
+    private static class TelemetryMetadata<T>
+    {
+        public static readonly string Name = typeof(T).Name;
+        public static readonly string? FullName = typeof(T).FullName;
+        public static readonly KeyValuePair<string, object?> RequestTypeTag = new("mediator.request.type", FullName);
+        public static readonly KeyValuePair<string, object?> NotificationTypeTag = new("mediator.notification.type", FullName);
+    }
+
     internal static async Task<TResponse> TraceRequestAsync<TRequest, TResponse>(Task<TResponse> task)
     {
-        using var activity = ActivitySource.StartActivity(typeof(TRequest).Name, ActivityKind.Internal);
-        activity?.SetTag("mediator.request.type", typeof(TRequest).FullName);
+        using var activity = ActivitySource.StartActivity(TelemetryMetadata<TRequest>.Name, ActivityKind.Internal);
+        activity?.SetTag("mediator.request.type", TelemetryMetadata<TRequest>.FullName);
         var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
@@ -55,8 +67,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 RequestDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.request.type", typeof(TRequest).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "ok"));
+                    TelemetryMetadata<TRequest>.RequestTypeTag,
+                    StatusOkTag);
             }
 
             return result;
@@ -69,8 +81,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 RequestDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.request.type", typeof(TRequest).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "canceled"));
+                    TelemetryMetadata<TRequest>.RequestTypeTag,
+                    StatusCanceledTag);
             }
 
             throw;
@@ -83,8 +95,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 RequestDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.request.type", typeof(TRequest).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "error"),
+                    TelemetryMetadata<TRequest>.RequestTypeTag,
+                    StatusErrorTag,
                     new KeyValuePair<string, object?>("error.type", ex.GetType().FullName));
             }
 
@@ -94,8 +106,8 @@ public static class SimpleMediatorDiagnostics
 
     internal static async Task TraceNotificationAsync<TNotification>(Task task)
     {
-        using var activity = ActivitySource.StartActivity(typeof(TNotification).Name, ActivityKind.Internal);
-        activity?.SetTag("mediator.notification.type", typeof(TNotification).FullName);
+        using var activity = ActivitySource.StartActivity(TelemetryMetadata<TNotification>.Name, ActivityKind.Internal);
+        activity?.SetTag("mediator.notification.type", TelemetryMetadata<TNotification>.FullName);
         var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
@@ -106,8 +118,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 NotificationDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.notification.type", typeof(TNotification).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "ok"));
+                    TelemetryMetadata<TNotification>.NotificationTypeTag,
+                    StatusOkTag);
             }
         }
         catch (OperationCanceledException)
@@ -118,8 +130,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 NotificationDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.notification.type", typeof(TNotification).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "canceled"));
+                    TelemetryMetadata<TNotification>.NotificationTypeTag,
+                    StatusCanceledTag);
             }
 
             throw;
@@ -132,8 +144,8 @@ public static class SimpleMediatorDiagnostics
                 var elapsedMs = Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
                 NotificationDuration.Record(
                     elapsedMs,
-                    new KeyValuePair<string, object?>("mediator.notification.type", typeof(TNotification).FullName),
-                    new KeyValuePair<string, object?>("mediator.status", "error"),
+                    TelemetryMetadata<TNotification>.NotificationTypeTag,
+                    StatusErrorTag,
                     new KeyValuePair<string, object?>("error.type", ex.GetType().FullName));
             }
 

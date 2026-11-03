@@ -31,9 +31,13 @@ public sealed class SimpleMediatorGenerator : IIncrementalGenerator
                 static (syntaxContext, _) => (InvocationExpressionSyntax)syntaxContext.Node)
             .Collect();
 
+        var modelProvider = context.CompilationProvider
+            .Combine(invocations)
+            .Select(static (source, cancellationToken) => BuildModel(source.Left, source.Right, cancellationToken));
+
         context.RegisterSourceOutput(
-            context.CompilationProvider.Combine(invocations),
-            static (output, source) => Execute(output, source.Left, source.Right));
+            modelProvider,
+            static (output, result) => EmitOutput(output, result));
     }
 
     private static bool IsCandidate(InvocationExpressionSyntax invocation)
@@ -49,22 +53,22 @@ public sealed class SimpleMediatorGenerator : IIncrementalGenerator
             _ => null,
         };
 
-    private static void Execute(
-        SourceProductionContext output,
+    private static (RegistrationModel? Model, Diagnostic? Failure) BuildModel(
         Compilation compilation,
-        ImmutableArray<InvocationExpressionSyntax> invocations)
+        ImmutableArray<InvocationExpressionSyntax> invocations,
+        CancellationToken cancellationToken)
     {
         var knownSymbols = KnownSymbols.TryCreate(compilation);
         if (knownSymbols is null)
         {
-            return;
+            return (null, null);
         }
 
-        RegistrationModel model;
 #pragma warning disable CA1031 // A generator bug must surface as a diagnostic, never crash the build.
         try
         {
-            model = new ModelBuilder(compilation, knownSymbols, output.CancellationToken).Build(invocations);
+            var model = new ModelBuilder(compilation, knownSymbols, cancellationToken).Build(invocations);
+            return (model, null);
         }
         catch (OperationCanceledException)
         {
@@ -72,13 +76,29 @@ public sealed class SimpleMediatorGenerator : IIncrementalGenerator
         }
         catch (Exception exception)
         {
-            output.ReportDiagnostic(Diagnostic.Create(
+            var failure = Diagnostic.Create(
                 Diagnostics.GeneratorFailure,
                 Location.None,
-                exception.GetType().Name + ": " + exception.Message));
-            return;
+                exception.GetType().Name + ": " + exception.Message);
+            return (null, failure);
         }
 #pragma warning restore CA1031
+    }
+
+    private static void EmitOutput(
+        SourceProductionContext output,
+        (RegistrationModel? Model, Diagnostic? Failure) result)
+    {
+        if (result.Failure is not null)
+        {
+            output.ReportDiagnostic(result.Failure);
+            return;
+        }
+
+        if (result.Model is not { } model)
+        {
+            return;
+        }
 
         output.AddSource(RegistrationsHintName, SourceText.From(Emitter.EmitRegistrations(model), Encoding.UTF8));
 

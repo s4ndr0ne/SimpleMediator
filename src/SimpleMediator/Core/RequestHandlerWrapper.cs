@@ -16,15 +16,17 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     private readonly MediatorConfiguration? _configuration;
     private readonly BehaviorOrderCache _behaviorOrder = new();
 
-    // Tri-state probes (0 = unknown, 1 = none registered, 2 = at least one registered) per
+    // Tri-state probes (0 = unknown, 1 = none/single-closed confirmed, 2 = full path required) per
     // closed (TRequest, TResponse) wrapper. Since a ServiceProvider's registrations are immutable
     // once built, the first request for a given (TRequest, TResponse) probes the container once;
-    // subsequent requests skip GetServices<...>() completely when none are registered, saving 3
-    // array allocations and 3 dictionary lookups per Send while still honoring services added to
+    // subsequent requests skip GetServices<...>() completely when none are registered, saving
+    // array allocations and dictionary lookups per Send while still honoring services added to
     // IServiceCollection AFTER AddSimpleMediator(...).
+    private int _handlerResolutionState;
     private int _preHandlerState;
     private int _postHandlerState;
     private int _behaviorState;
+    private int _fastPathState;
 
     public RequestHandlerWrapperImpl()
     {
@@ -44,17 +46,16 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         if (configuration is { EnableTelemetry: true } && SimpleMediatorDiagnostics.HasTelemetryListeners())
         {
             return SimpleMediatorDiagnostics.TraceRequestAsync<TRequest, TResponse>(
-                HandleCoreAsync(typedRequest, serviceProvider, configuration, cancellationToken));
+                Volatile.Read(ref _fastPathState) == 1
+                    ? HandleFastPath(typedRequest, serviceProvider, cancellationToken)
+                    : HandleCoreAsync(typedRequest, serviceProvider, configuration, cancellationToken));
         }
 #endif
 
         // Zero-state-machine, zero-array-allocation fast path once the first request has confirmed
-        // that this (TRequest, TResponse) has no pre-handlers, post-handlers, behaviors, or custom
-        // open-generic handlers.
-        if (Volatile.Read(ref _preHandlerState) == 1 &&
-            Volatile.Read(ref _postHandlerState) == 1 &&
-            Volatile.Read(ref _behaviorState) == 1 &&
-            configuration is { CustomOpenGenericRequestHandlers.Count: 0 })
+        // that this (TRequest, TResponse) has a single closed DI handler and no pre-handlers,
+        // post-handlers, or pipeline behaviors.
+        if (Volatile.Read(ref _fastPathState) == 1)
         {
             return HandleFastPath(typedRequest, serviceProvider, cancellationToken);
         }
@@ -69,9 +70,10 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     {
         try
         {
-            var handlerLease = RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration);
-            var task = handlerLease.Handler.Handle(typedRequest, cancellationToken)
-                       ?? throw RequestHandlerPipeline.NullTaskException(handlerLease.Handler);
+            var handler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>()
+                          ?? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration).Handler;
+            var task = handler.Handle(typedRequest, cancellationToken)
+                       ?? throw RequestHandlerPipeline.NullTaskException(handler);
 
             if (task.Status == TaskStatus.RanToCompletion)
             {
@@ -132,11 +134,28 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         // must observe them too.
         try
         {
-            handlerLease = RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, configuration);
+            handlerLease = RequestHandlerResolver.Resolve<TRequest, TResponse>(
+                serviceProvider,
+                configuration,
+                ref _handlerResolutionState);
 
             var preHandlers = ResolveOrSkip(serviceProvider, ref _preHandlerState, static sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>());
             var postHandlers = ResolveOrSkip(serviceProvider, ref _postHandlerState, static sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>());
             var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());
+
+            if (Volatile.Read(ref _fastPathState) == 0 &&
+                Volatile.Read(ref _handlerResolutionState) != 0 &&
+                Volatile.Read(ref _preHandlerState) != 0 &&
+                Volatile.Read(ref _postHandlerState) != 0 &&
+                Volatile.Read(ref _behaviorState) != 0)
+            {
+                var canFastPath =
+                    Volatile.Read(ref _handlerResolutionState) == 1 &&
+                    Volatile.Read(ref _preHandlerState) == 1 &&
+                    Volatile.Read(ref _postHandlerState) == 1 &&
+                    Volatile.Read(ref _behaviorState) == 1;
+                Volatile.Write(ref _fastPathState, canFastPath ? 1 : 2);
+            }
 
             return await RequestHandlerPipeline.Execute(
                 typedRequest,

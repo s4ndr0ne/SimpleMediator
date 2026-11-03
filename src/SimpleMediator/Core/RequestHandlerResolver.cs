@@ -13,6 +13,28 @@ internal static class RequestHandlerResolver
         MediatorConfiguration? configuration = null)
         where TRequest : IRequest<TResponse>
     {
+        var state = 0;
+        return Resolve<TRequest, TResponse>(serviceProvider, configuration, ref state);
+    }
+
+    public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(
+        IServiceProvider serviceProvider,
+        MediatorConfiguration? configuration,
+        ref int resolutionState)
+        where TRequest : IRequest<TResponse>
+    {
+        // Once the first request for (TRequest, TResponse) has confirmed that the container holds
+        // exactly one closed DI handler and zero custom open-generic matches, resolve the single
+        // service directly to avoid the T[1] array allocation of GetServices<T>() on every Send.
+        if (Volatile.Read(ref resolutionState) == 1)
+        {
+            var singleHandler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>();
+            if (singleHandler is not null)
+            {
+                return new HandlerLease<TRequest, TResponse>(singleHandler);
+            }
+        }
+
         // Avoid materializing the DI result with ToList(). Requests normally have one
         // closed handler, so keeping only the first instance and a count saves a temporary
         // List allocation while preserving the multiple-handler validation. Microsoft DI
@@ -62,6 +84,11 @@ internal static class RequestHandlerResolver
             throw new RequestHandlerResolutionException(
                 $"Multiple request handlers registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'. " +
                 "A request can only have one handler.");
+        }
+
+        if (Volatile.Read(ref resolutionState) == 0)
+        {
+            Volatile.Write(ref resolutionState, closedHandlerCount == 1 ? 1 : 2);
         }
 
         if (closedHandlerCount == 1)

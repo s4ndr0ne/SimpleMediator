@@ -29,8 +29,10 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
     }
 
     public override Task Handle(INotification notification, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+        => HandleTyped((TNotification)notification, serviceProvider, cancellationToken);
+
+    internal Task HandleTyped(TNotification typed, IServiceProvider serviceProvider, CancellationToken cancellationToken)
     {
-        var typed = (TNotification)notification;
         var configuration = _configuration ?? serviceProvider.GetService<MediatorConfiguration>();
 
 #if !NETSTANDARD2_0
@@ -98,11 +100,11 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         int[] behaviorOrder,
         CancellationToken cancellationToken)
     {
-        NotificationHandlerDelegate publishDelegate = ct =>
+        NotificationHandlerDelegate aggregate = ct =>
             PublishCore(handlers, notification, customPublisher, strategy, ct);
 
-        var aggregate = publishDelegate;
-        for (var index = 0; index < behaviorOrder.Length; index++)
+        var lastIndex = behaviorOrder.Length - 1;
+        for (var index = 0; index < lastIndex; index++)
         {
             var behavior = behaviors[behaviorOrder[index]];
             var next = aggregate;
@@ -110,7 +112,9 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
                               ?? throw RequestHandlerPipeline.NullTaskException(behavior);
         }
 
-        return aggregate(cancellationToken);
+        var outermost = behaviors[behaviorOrder[lastIndex]];
+        return outermost.Handle(notification, aggregate, cancellationToken)
+               ?? throw RequestHandlerPipeline.NullTaskException(outermost);
     }
 
     private static Task PublishCore(
@@ -131,7 +135,7 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
             : PublishSequential(handlers, notification, cancellationToken);
     }
 
-    private static async Task PublishSequential(
+    private static Task PublishSequential(
         IEnumerable<INotificationHandler<TNotification>> handlers,
         TNotification notification,
         CancellationToken cancellationToken)
@@ -146,11 +150,32 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
 
         for (var index = 0; index < handlerArray.Length; index++)
         {
+            var task = InvokeSafely(handlerArray[index], notification, cancellationToken);
+            if (task.Status != TaskStatus.RanToCompletion)
+            {
+                return PublishSequentialSlowAsync(handlerArray, index, task, notification, cancellationToken);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static async Task PublishSequentialSlowAsync(
+        INotificationHandler<TNotification>[] handlerArray,
+        int currentIndex,
+        Task currentTask,
+        TNotification notification,
+        CancellationToken cancellationToken)
+    {
+        await currentTask.ConfigureAwait(false);
+
+        for (var index = currentIndex + 1; index < handlerArray.Length; index++)
+        {
             await InvokeSafely(handlerArray[index], notification, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private static async Task PublishParallel(
+    private static Task PublishParallel(
         IEnumerable<INotificationHandler<TNotification>> handlers,
         TNotification notification,
         CancellationToken cancellationToken)
@@ -160,27 +185,49 @@ internal class NotificationHandlerWrapperImpl<TNotification> : NotificationHandl
         // handlers from running. Turn any synchronous throw into a faulted task so
         // every handler is started and every failure is aggregated below.
         var handlerArray = handlers as INotificationHandler<TNotification>[] ?? handlers.ToArray();
-        if (handlerArray.Length == 0) return;
+        if (handlerArray.Length == 0)
+        {
+            return Task.CompletedTask;
+        }
 
-        Task[] tasks;
         if (handlerArray.Length == 1)
         {
             var singleTask = InvokeSafely(handlerArray[0], notification, cancellationToken);
-            if (singleTask.Status == TaskStatus.RanToCompletion) return;
-
-            // Avoid Task.WhenAll allocation on the hot success path. Faulted single-handler
-            // requests are normalized below to the original exception.
-            tasks = new[] { singleTask };
-        }
-        else
-        {
-            tasks = new Task[handlerArray.Length];
-            for (var index = 0; index < handlerArray.Length; index++)
+            if (singleTask.Status == TaskStatus.RanToCompletion)
             {
-                tasks[index] = InvokeSafely(handlerArray[index], notification, cancellationToken);
+                return Task.CompletedTask;
+            }
+
+            return AwaitSingleParallelAsync(singleTask);
+        }
+
+        var tasks = new Task[handlerArray.Length];
+        var allCompletedSuccessfully = true;
+        for (var index = 0; index < handlerArray.Length; index++)
+        {
+            var task = InvokeSafely(handlerArray[index], notification, cancellationToken);
+            tasks[index] = task;
+            if (task.Status != TaskStatus.RanToCompletion)
+            {
+                allCompletedSuccessfully = false;
             }
         }
 
+        if (allCompletedSuccessfully)
+        {
+            return Task.CompletedTask;
+        }
+
+        return AwaitMultipleParallelAsync(tasks, cancellationToken);
+    }
+
+    private static async Task AwaitSingleParallelAsync(Task singleTask)
+    {
+        await singleTask.ConfigureAwait(false);
+    }
+
+    private static async Task AwaitMultipleParallelAsync(Task[] tasks, CancellationToken cancellationToken)
+    {
         var whenAll = Task.WhenAll(tasks);
         try
         {

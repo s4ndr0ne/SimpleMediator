@@ -413,4 +413,43 @@ public sealed class GeneratorDriverTests
 
         Assert.Contains("global::SimpleMediator.SimpleMediatorGeneratedModule_Orders.Populate(registry);", hostRegistrations, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Incremental_pipeline_caches_output_when_unrelated_method_body_changes()
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        const string InitialSource = Usings + Composition + """
+            public sealed class Ping : IRequest<int> { }
+            public sealed class PingHandler : IRequestHandler<Ping, int>
+            {
+                public Task<int> Handle(Ping request, CancellationToken cancellationToken) => Task.FromResult(1);
+            }
+            """;
+
+        var tree1 = CSharpSyntaxTree.ParseText(InitialSource, parseOptions);
+        var compilation1 = CSharpCompilation.Create(
+            "IncrementalInput",
+            [tree1],
+            References.Value,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SimpleMediatorGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions,
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+
+        driver = driver.RunGenerators(compilation1);
+
+        var tree2 = CSharpSyntaxTree.ParseText(
+            InitialSource.Replace("Task.FromResult(1)", "Task.FromResult(42)", StringComparison.Ordinal),
+            parseOptions);
+        var compilation2 = compilation1.ReplaceSyntaxTree(tree1, tree2);
+
+        driver = driver.RunGenerators(compilation2);
+        var runResult = driver.GetRunResult().Results.Single();
+
+        Assert.All(
+            runResult.TrackedOutputSteps.SelectMany(step => step.Value).SelectMany(step => step.Outputs),
+            output => Assert.Equal(IncrementalStepRunReason.Cached, output.Reason));
+    }
 }

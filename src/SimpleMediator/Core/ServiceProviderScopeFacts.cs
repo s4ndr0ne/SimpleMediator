@@ -42,6 +42,16 @@ internal static class ServiceProviderScopeFacts
             return true;
         }
 
+        // Both the root scope (which implements IServiceScopeFactory) and every caller-created
+        // scope share the same internal runtime type (ServiceProviderEngineScope), whereas the
+        // outer root ServiceProvider wrapper has a distinct runtime type. When serviceProvider
+        // has the same runtime type as scopeFactory and is not reference-equal to it, it is
+        // guaranteed to be a child scope without a second GetService<IServiceProvider>() lookup.
+        if (serviceProvider.GetType() == scopeFactory.GetType())
+        {
+            return false;
+        }
+
         var self = serviceProvider.GetService<IServiceProvider>();
         return !ReferenceEquals(self, serviceProvider) && ReferenceEquals(self, scopeFactory);
     }

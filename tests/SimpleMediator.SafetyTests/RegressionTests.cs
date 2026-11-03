@@ -287,6 +287,28 @@ public class RegressionTests
         AddSingletonEmittedHandler(services, _ => new[] { typeof(RegressionDependency) });
     }
 
+    [Theory]
+    [InlineData(NotificationPublishStrategy.Sequential)]
+    [InlineData(NotificationPublishStrategy.Parallel)]
+    public async Task StructNotification_DispatchesWithoutStateMachineWhenHandlersCompleteSynchronously(
+        NotificationPublishStrategy strategy)
+    {
+        var services = new ServiceCollection();
+        services.AddScoped<INotificationHandler<StructPingNotification>, StructPingNotificationHandler>();
+        services.AddSimpleMediator(options => options.NotificationPublishStrategy = strategy);
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
+
+        StructPingNotificationHandler.LastValue = 0;
+        var task = publisher.Publish(new StructPingNotification(99));
+
+        Assert.Same(Task.CompletedTask, task);
+        await task;
+        Assert.Equal(99, StructPingNotificationHandler.LastValue);
+    }
+
     // ---------------------------------------------------------------------
     // Helpers and test types
     // ---------------------------------------------------------------------
@@ -466,4 +488,18 @@ public sealed class NullReturningInnerBehavior : IPipelineBehavior<RegressionPin
 
     public Task<int> Handle(RegressionPingRequest request, RequestHandlerDelegate<int> next, CancellationToken cancellationToken)
         => null!;
+}
+
+public readonly record struct StructPingNotification(int Value) : INotification;
+
+public sealed class StructPingNotificationHandler : INotificationHandler<StructPingNotification>
+{
+    [ThreadStatic]
+    public static int LastValue;
+
+    public Task Handle(StructPingNotification notification, CancellationToken cancellationToken)
+    {
+        LastValue = notification.Value;
+        return Task.CompletedTask;
+    }
 }

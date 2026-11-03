@@ -50,9 +50,6 @@ internal sealed class BoundedFactoryCache<TKey, [DynamicallyAccessedMembers(Dyna
             return GetValueAndRemoveIfFaulted(key, existing);
         }
 
-        var candidate = new CacheEntry(
-            new Lazy<TValue>(() => factory(key), LazyThreadSafetyMode.ExecutionAndPublication));
-
         CacheEntry entry;
         lock (_evictionGate)
         {
@@ -62,7 +59,8 @@ internal sealed class BoundedFactoryCache<TKey, [DynamicallyAccessedMembers(Dyna
             }
             else
             {
-                entry = candidate;
+                entry = new CacheEntry(
+                    new Lazy<TValue>(() => factory(key), LazyThreadSafetyMode.ExecutionAndPublication));
                 _ = _entries.TryAdd(key, entry);
                 entry.Node = _order.AddLast(key);
                 TrimToCapacity();
@@ -79,6 +77,11 @@ internal sealed class BoundedFactoryCache<TKey, [DynamicallyAccessedMembers(Dyna
     // entry keeps its current position, which only makes eviction slightly more conservative.
     private void Touch(CacheEntry entry)
     {
+        if (ReferenceEquals(_order.Last, entry.Node))
+        {
+            return;
+        }
+
         if (!Monitor.TryEnter(_evictionGate, 0))
         {
             return;

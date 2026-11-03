@@ -55,6 +55,7 @@ public static class GeneratedMediatorRegistration
         }
 
         ServiceCollectionExtensions.AddMediatorServices(services);
+        var registrationIndex = new ServiceCollectionExtensions.ServiceRegistrationIndex(services);
 
         // Same selection and order as assembly scanning: assemblies in RegisterAssembly order, types in
         // ordinal full-name order within an assembly (the generator emits them sorted), filtered by the
@@ -66,7 +67,7 @@ public static class GeneratedMediatorRegistration
             {
                 if (declaredType.Assembly == assembly && (filter is null || filter(declaredType)))
                 {
-                    services.TryAddEnumerable(descriptor(options.DefaultLifetime));
+                    registrationIndex.TryAddEnumerable(descriptor(options.DefaultLifetime));
                 }
             }
         }
@@ -74,9 +75,9 @@ public static class GeneratedMediatorRegistration
         // Behaviors stay opt-in and ordered exactly as with the reflection-based registration: the
         // generator pre-closes every behavior it can see, and only the ones passed to AddBehavior,
         // AddStreamBehavior, or AddNotificationBehavior are registered, in registration order.
-        RegisterGeneratedBehaviors(services, registry, options.Behaviors, options.DefaultLifetime, "AddBehavior");
-        RegisterGeneratedBehaviors(services, registry, options.StreamBehaviors, options.DefaultLifetime, "AddStreamBehavior");
-        RegisterGeneratedBehaviors(services, registry, options.NotificationBehaviors, options.DefaultLifetime, "AddNotificationBehavior");
+        RegisterGeneratedBehaviors(registrationIndex, registry, options.Behaviors, options.DefaultLifetime, "AddBehavior");
+        RegisterGeneratedBehaviors(registrationIndex, registry, options.StreamBehaviors, options.DefaultLifetime, "AddStreamBehavior");
+        RegisterGeneratedBehaviors(registrationIndex, registry, options.NotificationBehaviors, options.DefaultLifetime, "AddNotificationBehavior");
 
         var configuration = ServiceCollectionExtensions.MergeConfiguration(
             services,
@@ -93,7 +94,7 @@ public static class GeneratedMediatorRegistration
     }
 
     private static void RegisterGeneratedBehaviors(
-        IServiceCollection services,
+        ServiceCollectionExtensions.ServiceRegistrationIndex registrationIndex,
         GeneratedMediatorRegistry registry,
         List<Type> behaviorTypes,
         ServiceLifetime lifetime,
@@ -111,7 +112,7 @@ public static class GeneratedMediatorRegistration
 
             foreach (var behavior in behaviors)
             {
-                ServiceCollectionExtensions.AddBehaviorDescriptor(services, behavior(lifetime));
+                registrationIndex.AddBehaviorDescriptor(behavior(lifetime));
             }
         }
     }
@@ -120,19 +121,25 @@ public static class GeneratedMediatorRegistration
     // it can see, this also covers handlers registered by hand next to the generated ones.
     private static void ValidateSingleRequestHandler(IServiceCollection services)
     {
-        var duplicate = services
+        var seen = new HashSet<Type>();
+        for (var i = 0; i < services.Count; i++)
+        {
+            var descriptor = services[i];
             // Generated dispatch uses the ordinary (non-keyed) service lookup, so keyed
             // handlers do not participate in duplicate detection.
-            .Where(descriptor => !descriptor.IsKeyedService &&
-                                 (OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType) ||
-                                  OpenGenericRegistrationRules.IsClosedStreamRequestHandler(descriptor.ServiceType)))
-            .GroupBy(descriptor => descriptor.ServiceType)
-            .FirstOrDefault(group => group.Count() > 1);
+            if (descriptor.IsKeyedService)
+            {
+                continue;
+            }
 
-        if (duplicate is not null)
-        {
-            throw new RequestHandlerResolutionException(
-                $"Multiple request handlers registered for '{duplicate.Key.FullName}'. A request can only have one handler.");
+            var serviceType = descriptor.ServiceType;
+            if ((OpenGenericRegistrationRules.IsClosedRequestHandler(serviceType) ||
+                 OpenGenericRegistrationRules.IsClosedStreamRequestHandler(serviceType)) &&
+                !seen.Add(serviceType))
+            {
+                throw new RequestHandlerResolutionException(
+                    $"Multiple request handlers registered for '{serviceType.FullName}'. A request can only have one handler.");
+            }
         }
     }
 }

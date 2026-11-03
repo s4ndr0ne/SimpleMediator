@@ -24,18 +24,49 @@ internal sealed class OutboxSignal : IOutboxSignal
             return true;
         }
 
-        using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var delayTask = Task.Delay(timeout, timeProvider, delayCts.Token);
-        var readTask = _channel.Reader.WaitToReadAsync(cancellationToken).AsTask();
-
-        var completed = await Task.WhenAny(readTask, delayTask).ConfigureAwait(false);
-        if (completed == readTask)
+        // Wait directly on the channel's pooled ValueTask<bool> with a timeout-backed token instead
+        // of converting WaitToReadAsync to a heap-allocated Task via .AsTask() + Task.Delay + Task.WhenAny.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        ITimer? customTimer = null;
+        if (ReferenceEquals(timeProvider, TimeProvider.System))
         {
-            await delayCts.CancelAsync().ConfigureAwait(false);
-            if (await readTask.ConfigureAwait(false))
+            timeoutCts.CancelAfter(timeout);
+        }
+        else
+        {
+            customTimer = timeProvider.CreateTimer(
+                static state =>
+                {
+                    try
+                    {
+                        ((CancellationTokenSource)state!).Cancel();
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                    }
+                },
+                timeoutCts,
+                timeout,
+                Timeout.InfiniteTimeSpan);
+        }
+
+        try
+        {
+            if (await _channel.Reader.WaitToReadAsync(timeoutCts.Token).ConfigureAwait(false))
             {
                 _ = _channel.Reader.TryRead(out _);
                 return true;
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        finally
+        {
+            if (customTimer is not null)
+            {
+                await customTimer.DisposeAsync().ConfigureAwait(false);
             }
         }
 

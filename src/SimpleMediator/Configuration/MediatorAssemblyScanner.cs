@@ -17,8 +17,16 @@ internal static class MediatorAssemblyScanner
 {
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
-    internal static List<OpenGenericHandlerRegistration> ScanAndRegister(IServiceCollection services, SimpleMediatorOptions options)
+    internal static List<OpenGenericHandlerRegistration> ScanAndRegister(
+        IServiceCollection services,
+        SimpleMediatorOptions options,
+        ServiceCollectionExtensions.ServiceRegistrationIndex registrationIndex = default)
     {
+        if (registrationIndex.Equals(default(ServiceCollectionExtensions.ServiceRegistrationIndex)))
+        {
+            registrationIndex = new ServiceCollectionExtensions.ServiceRegistrationIndex(services);
+        }
+
         // Keep only request handlers that need custom type-argument inference. Handlers whose
         // implementation parameters line up with IRequestHandler<TRequest, TResponse> are
         // registered through native DI and inherit its lifetime and decoration semantics.
@@ -64,7 +72,7 @@ internal static class MediatorAssemblyScanner
 
                 if (type.IsGenericTypeDefinition)
                 {
-                    RegisterOpenGenericType(services, type, options.DefaultLifetime, customOpenGenericRequestHandlers);
+                    RegisterOpenGenericType(registrationIndex, type, options.DefaultLifetime, customOpenGenericRequestHandlers);
                     continue;
                 }
 
@@ -85,7 +93,7 @@ internal static class MediatorAssemblyScanner
                     var genericTypeDefinition = implementedInterface.GetGenericTypeDefinition();
                     if (OpenGenericRegistrationRules.MatchesSupportedHandlerInterface(genericTypeDefinition))
                     {
-                        services.TryAddEnumerable(new ServiceDescriptor(implementedInterface, type, options.DefaultLifetime));
+                        registrationIndex.TryAddEnumerable(new ServiceDescriptor(implementedInterface, type, options.DefaultLifetime));
                     }
                 }
             }
@@ -95,7 +103,7 @@ internal static class MediatorAssemblyScanner
     }
 
     private static void RegisterOpenGenericType(
-        IServiceCollection services,
+        ServiceCollectionExtensions.ServiceRegistrationIndex registrationIndex,
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces | DynamicallyAccessedMemberTypes.PublicConstructors)] Type type,
         ServiceLifetime lifetime,
         List<OpenGenericHandlerRegistration> customOpenGenericRequestHandlers)
@@ -106,11 +114,11 @@ internal static class MediatorAssemblyScanner
 
         foreach (var implementedInterface in implementedInterfaces)
         {
-            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
-            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
-            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
-            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IPostRequestHandler<,>), lifetime);
-            RegisterNativeOpenGenericInterface(services, type, implementedInterface, typeof(IRequestExceptionHandler<,>), lifetime);
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPostRequestHandler<,>), lifetime);
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IRequestExceptionHandler<,>), lifetime);
         }
 
         var requestHandlerInterfaces = implementedInterfaces
@@ -129,7 +137,7 @@ internal static class MediatorAssemblyScanner
                     implementedInterface,
                     typeof(IRequestHandler<,>))))
         {
-            services.TryAddEnumerable(
+            registrationIndex.TryAddEnumerable(
                 new ServiceDescriptor(typeof(IRequestHandler<,>), type, lifetime));
             return;
         }
@@ -148,7 +156,7 @@ internal static class MediatorAssemblyScanner
     }
 
     private static void RegisterNativeOpenGenericInterface(
-        IServiceCollection services,
+        ServiceCollectionExtensions.ServiceRegistrationIndex registrationIndex,
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type implementationType,
         Type implementedInterface,
         Type serviceTypeDefinition,
@@ -168,6 +176,6 @@ internal static class MediatorAssemblyScanner
                 "The implementation type parameters must line up 1:1 with the service interface, or the handler must be registered as a closed type.");
         }
 
-        services.TryAddEnumerable(new ServiceDescriptor(serviceTypeDefinition, implementationType, lifetime));
+        registrationIndex.TryAddEnumerable(new ServiceDescriptor(serviceTypeDefinition, implementationType, lifetime));
     }
 }
