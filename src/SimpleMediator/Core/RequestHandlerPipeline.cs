@@ -117,29 +117,53 @@ internal static class RequestHandlerPipeline
         CancellationToken cancellationToken)
         where TRequest : IRequest<TResponse>
     {
-        // When there are no pre- or post-handlers (the common case), the innermost delegate calls
-        // the request handler directly without allocating an async state machine of its own.
+        // When there are no pre- or post-handlers (the common case), use a dedicated 2-field step
+        // instead of a shared compiler DisplayClass that also captures preHandlers and postHandlers.
         RequestHandlerDelegate<TResponse> aggregate = preHandlers.Count == 0 && postHandlers.Count == 0
-            ? ct => handler.Handle(request, ct) ?? throw NullTaskException(handler)
-            : ct => ExecuteWithoutBehaviors(request, handler, preHandlers, postHandlers, ct);
+            ? new TerminalHandlerStep<TRequest, TResponse>(request, handler).Invoke
+            : new PrePostHandlerStep<TRequest, TResponse>(request, handler, preHandlers, postHandlers).Invoke;
 
-        // Wrap all but the outermost behavior in delegates; invoke the outermost behavior directly
-        // to save one closure and one RequestHandlerDelegate allocation on every request.
+        // Wrap all but the outermost behavior in self-contained step delegates; invoke the outermost
+        // behavior directly to save one step and one RequestHandlerDelegate allocation per request.
         var lastIndex = behaviorOrder.Length - 1;
         for (var index = 0; index < lastIndex; index++)
         {
             var behavior = behaviors[behaviorOrder[index]];
-            var next = aggregate;
-            // Check each behavior's own result so a null Task is reported against the behavior
-            // that actually returned it. Checking only the outermost result used to blame the
-            // innermost behavior. The throw is synchronous, so it reaches the caller's try/catch
-            // whether it surfaces before or after the first await, without an extra state
-            // machine per behavior.
-            aggregate = ct => behavior.Handle(request, next, ct) ?? throw NullTaskException(behavior);
+            aggregate = new BehaviorPipelineStep<TRequest, TResponse>(request, behavior, aggregate).Invoke;
         }
 
         var outermost = behaviors[behaviorOrder[lastIndex]];
         return outermost.Handle(request, aggregate, cancellationToken) ?? throw NullTaskException(outermost);
+    }
+
+    private sealed class TerminalHandlerStep<TRequest, TResponse>(
+        TRequest request,
+        IRequestHandler<TRequest, TResponse> handler)
+        where TRequest : IRequest<TResponse>
+    {
+        public Task<TResponse> Invoke(CancellationToken ct)
+            => handler.Handle(request, ct) ?? throw NullTaskException(handler);
+    }
+
+    private sealed class PrePostHandlerStep<TRequest, TResponse>(
+        TRequest request,
+        IRequestHandler<TRequest, TResponse> handler,
+        IReadOnlyList<IPreRequestHandler<TRequest, TResponse>> preHandlers,
+        IReadOnlyList<IPostRequestHandler<TRequest, TResponse>> postHandlers)
+        where TRequest : IRequest<TResponse>
+    {
+        public Task<TResponse> Invoke(CancellationToken ct)
+            => ExecuteWithoutBehaviors(request, handler, preHandlers, postHandlers, ct);
+    }
+
+    private sealed class BehaviorPipelineStep<TRequest, TResponse>(
+        TRequest request,
+        IPipelineBehavior<TRequest, TResponse> behavior,
+        RequestHandlerDelegate<TResponse> next)
+        where TRequest : IRequest<TResponse>
+    {
+        public Task<TResponse> Invoke(CancellationToken ct)
+            => behavior.Handle(request, next, ct) ?? throw NullTaskException(behavior);
     }
 
     /// <summary>

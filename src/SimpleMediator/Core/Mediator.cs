@@ -114,11 +114,11 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        // Key by both request and response type so cache entries remain correct even if callers
-        // use explicit generic response types.
-        // Wrappers are created once per type and cached; the wrapper is then invoked through typed
-        // generic code, so nothing type-dependent is computed on the per-call path.
-        var handler = (RequestHandlerWrapper<TResponse>)_requestHandlerWrappers.GetOrAdd(
+        // Fast lookup by requestType alone for the common single-response-per-request case, with
+        // automatic fallback to the full (requestType, typeof(TResponse)) key when a request type
+        // implements multiple IRequest<TResponse> contracts.
+        var handler = _requestHandlerWrappers.GetOrAddByPrimaryType<RequestHandlerWrapper<TResponse>>(
+            requestType,
             (requestType, typeof(TResponse)),
             _requestWrapperFactory);
 
@@ -132,7 +132,8 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
 
-        var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlerWrappers.GetOrAdd(
+        var handler = _streamRequestHandlerWrappers.GetOrAddByPrimaryType<StreamRequestHandlerWrapper<TResponse>>(
+            requestType,
             (requestType, typeof(TResponse)),
             _streamRequestWrapperFactory);
 

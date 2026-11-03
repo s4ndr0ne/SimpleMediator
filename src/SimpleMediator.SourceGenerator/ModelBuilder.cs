@@ -397,7 +397,7 @@ internal sealed class ModelBuilder
                 }
 
                 if (type.TypeKind == TypeKind.Class &&
-                    type.AllInterfaces.Any(implemented => _known.IsBehaviorInterface(implemented.OriginalDefinition)) &&
+                    ImplementsBehaviorInterface(type) &&
                     IsAccessible(type, report: false))
                 {
                     AddBehaviorType(type);
@@ -429,8 +429,26 @@ internal sealed class ModelBuilder
                 continue;
             }
 
-            var isHandler = type.AllInterfaces.Any(implemented => _known.IsHandlerInterface(implemented.OriginalDefinition));
-            var isBehavior = type.AllInterfaces.Any(implemented => _known.IsBehaviorInterface(implemented.OriginalDefinition));
+            var isHandler = false;
+            var isBehavior = false;
+            foreach (var implemented in type.AllInterfaces)
+            {
+                var definition = implemented.OriginalDefinition;
+                if (!isHandler && _known.IsHandlerInterface(definition))
+                {
+                    isHandler = true;
+                }
+
+                if (!isBehavior && _known.IsBehaviorInterface(definition))
+                {
+                    isBehavior = true;
+                }
+
+                if (isHandler && isBehavior)
+                {
+                    break;
+                }
+            }
 
             if (isHandler && IsAccessible(type, report: _registeredAssemblies.Contains(assembly)))
             {
@@ -439,9 +457,12 @@ internal sealed class ModelBuilder
                 if (!type.IsGenericType)
                 {
                     // A closed handler also identifies the message it handles.
-                    foreach (var implemented in type.AllInterfaces.Where(i => _known.IsHandlerInterface(i.OriginalDefinition)))
+                    foreach (var implemented in type.AllInterfaces)
                     {
-                        AddMessage(implemented.TypeArguments[0]);
+                        if (_known.IsHandlerInterface(implemented.OriginalDefinition))
+                        {
+                            AddMessage(implemented.TypeArguments[0]);
+                        }
                     }
                 }
             }
@@ -451,6 +472,19 @@ internal sealed class ModelBuilder
                 AddBehaviorType(type);
             }
         }
+    }
+
+    private bool ImplementsBehaviorInterface(INamedTypeSymbol type)
+    {
+        foreach (var implemented in type.AllInterfaces)
+        {
+            if (_known.IsBehaviorInterface(implemented.OriginalDefinition))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void AddBehaviorType(INamedTypeSymbol behavior)
@@ -511,8 +545,13 @@ internal sealed class ModelBuilder
                 var key = RenderTypeOfOperand(type);
                 var closedRegistrations = new List<(INamedTypeSymbol Service, INamedTypeSymbol Implementation)>();
 
-                foreach (var implemented in type.AllInterfaces.Where(i => _known.IsHandlerInterface(i.OriginalDefinition)))
+                foreach (var implemented in type.AllInterfaces)
                 {
+                    if (!_known.IsHandlerInterface(implemented.OriginalDefinition))
+                    {
+                        continue;
+                    }
+
                     if (!type.IsGenericType)
                     {
                         closedRegistrations.Add((implemented, type));
@@ -592,8 +631,13 @@ internal sealed class ModelBuilder
             var key = RenderTypeOfOperand(behavior);
             var closedRegistrations = new List<(INamedTypeSymbol Service, INamedTypeSymbol Implementation)>();
 
-            foreach (var implemented in behavior.AllInterfaces.Where(i => _known.IsBehaviorInterface(i.OriginalDefinition)))
+            foreach (var implemented in behavior.AllInterfaces)
             {
+                if (!_known.IsBehaviorInterface(implemented.OriginalDefinition))
+                {
+                    continue;
+                }
+
                 if (!IsOpenDefinition(behavior))
                 {
                     closedRegistrations.Add((implemented, behavior));

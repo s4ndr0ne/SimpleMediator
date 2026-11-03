@@ -111,7 +111,8 @@ internal static class RequestHandlerResolver
                 var store = serviceProvider.GetRequiredService<OpenGenericSingletonLifetimeStore>();
                 openGenericHandler = store.GetOrAdd(
                     (match.ImplementationType, match.RequestType, match.ResponseType),
-                    () => match.Factory(store.RootProvider, arguments: null));
+                    match.Factory,
+                    store.RootProvider);
                 break;
             }
 
@@ -120,7 +121,8 @@ internal static class RequestHandlerResolver
                 var store = serviceProvider.GetRequiredService<OpenGenericScopedLifetimeStore>();
                 openGenericHandler = store.GetOrAdd(
                     (match.ImplementationType, match.RequestType, match.ResponseType),
-                    () => match.Factory(serviceProvider, arguments: null));
+                    match.Factory,
+                    serviceProvider);
                 break;
             }
 
@@ -159,6 +161,8 @@ internal static class RequestHandlerResolver
         }
 
         public IRequestHandler<TRequest, TResponse> Handler { get; }
+
+        public bool HasOwnedInstance => _ownedInstance is not null;
 
         public ValueTask DisposeAsync()
         {

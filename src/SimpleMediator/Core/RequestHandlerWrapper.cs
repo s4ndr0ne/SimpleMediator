@@ -48,7 +48,7 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
             return SimpleMediatorDiagnostics.TraceRequestAsync<TRequest, TResponse>(
                 Volatile.Read(ref _fastPathState) == 1
                     ? HandleFastPath(typedRequest, serviceProvider, cancellationToken)
-                    : HandleCoreAsync(typedRequest, serviceProvider, configuration, cancellationToken));
+                    : HandleCore(typedRequest, serviceProvider, configuration, cancellationToken));
         }
 #endif
 
@@ -60,7 +60,7 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
             return HandleFastPath(typedRequest, serviceProvider, cancellationToken);
         }
 
-        return HandleCoreAsync(typedRequest, serviceProvider, configuration, cancellationToken);
+        return HandleCore(typedRequest, serviceProvider, configuration, cancellationToken);
     }
 
     private Task<TResponse> HandleFastPath(
@@ -119,14 +119,12 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         }
     }
 
-    private async Task<TResponse> HandleCoreAsync(
+    private Task<TResponse> HandleCore(
         TRequest typedRequest,
         IServiceProvider serviceProvider,
         MediatorConfiguration? configuration,
         CancellationToken cancellationToken)
     {
-        var handlerLease = default(RequestHandlerResolver.HandlerLease<TRequest, TResponse>);
-
         // The try block deliberately starts BEFORE anything is resolved from DI. A behavior, a
         // pre/post handler, or the request handler itself can fail while being *constructed*
         // (missing dependency, bad configuration, throwing constructor). Those failures are just as
@@ -134,10 +132,15 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         // must observe them too.
         try
         {
-            handlerLease = RequestHandlerResolver.Resolve<TRequest, TResponse>(
+            var handlerLease = RequestHandlerResolver.Resolve<TRequest, TResponse>(
                 serviceProvider,
                 configuration,
                 ref _handlerResolutionState);
+
+            if (handlerLease.HasOwnedInstance)
+            {
+                return HandleOwnedLeaseAsync(typedRequest, handlerLease, serviceProvider, cancellationToken);
+            }
 
             var preHandlers = ResolveOrSkip(serviceProvider, ref _preHandlerState, static sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>());
             var postHandlers = ResolveOrSkip(serviceProvider, ref _postHandlerState, static sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>());
@@ -157,14 +160,21 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
                 Volatile.Write(ref _fastPathState, canFastPath ? 1 : 2);
             }
 
-            return await RequestHandlerPipeline.Execute(
+            var task = RequestHandlerPipeline.Execute(
                 typedRequest,
                 handlerLease.Handler,
                 preHandlers,
                 postHandlers,
                 behaviors,
                 _behaviorOrder,
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken);
+
+            if (task.Status == TaskStatus.RanToCompletion)
+            {
+                return task;
+            }
+
+            return AwaitFastPathAsync(typedRequest, task, serviceProvider, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -178,6 +188,43 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
             // Handler selection is a wiring defect (no handler / more than one handler), not a
             // failure of the request. Letting an exception handler observe it would hide the
             // misconfiguration behind a substitute response.
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return RequestHandlerPipeline.HandleExceptionAsync<TRequest, TResponse>(
+                typedRequest, exception, serviceProvider, cancellationToken);
+        }
+    }
+
+    private async Task<TResponse> HandleOwnedLeaseAsync(
+        TRequest typedRequest,
+        RequestHandlerResolver.HandlerLease<TRequest, TResponse> handlerLease,
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var preHandlers = ResolveOrSkip(serviceProvider, ref _preHandlerState, static sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>());
+            var postHandlers = ResolveOrSkip(serviceProvider, ref _postHandlerState, static sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>());
+            var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());
+
+            if (Volatile.Read(ref _fastPathState) == 0)
+            {
+                Volatile.Write(ref _fastPathState, 2);
+            }
+
+            return await RequestHandlerPipeline.Execute(
+                typedRequest,
+                handlerLease.Handler,
+                preHandlers,
+                postHandlers,
+                behaviors,
+                _behaviorOrder,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
             throw;
         }
         catch (Exception exception)

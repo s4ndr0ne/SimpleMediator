@@ -589,11 +589,14 @@ public class EnterpriseSafetyTests
         var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
 
         // The ordering must be computed from one snapshot, so an Order that changes between reads
-        // cannot make the sort comparator inconsistent.
+        // cannot make the sort comparator inconsistent, and a warm-cache mismatch must not re-read Order.
+        UnstableOrderBehavior.TotalReads = 0;
         for (var i = 0; i < 5; i++)
         {
             Assert.Equal(1, await mediator.Send(new UnstableOrderRequest()));
         }
+
+        Assert.Equal(5, UnstableOrderBehavior.TotalReads);
     }
 
     // ---------------------------------------------------------------------
@@ -883,9 +886,19 @@ public sealed class UnstableOrderHandler : IRequestHandler<UnstableOrderRequest,
 // Order changes on every read: only safe because the pipeline snapshots it once per request.
 public sealed class UnstableOrderBehavior : IPipelineBehavior<UnstableOrderRequest, int>
 {
+    [ThreadStatic]
+    public static int TotalReads;
+
     private int _counter;
 
-    public int Order => _counter++ % 2;
+    public int Order
+    {
+        get
+        {
+            TotalReads++;
+            return _counter++ % 2;
+        }
+    }
 
     public Task<int> Handle(UnstableOrderRequest request, RequestHandlerDelegate<int> next, CancellationToken cancellationToken)
         => next(cancellationToken);

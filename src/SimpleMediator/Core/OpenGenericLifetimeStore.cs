@@ -32,6 +32,25 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
         }
     }
 
+    public object GetOrAdd(
+        (Type Implementation, Type Request, Type Response) key,
+        ObjectFactory factory,
+        IServiceProvider serviceProvider)
+    {
+        lock (_gate)
+        {
+            ThrowHelper.ThrowIfDisposed(_disposed, this);
+            if (_instances.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            var created = factory(serviceProvider, arguments: null);
+            _instances.Add(key, created);
+            return created;
+        }
+    }
+
     public void Dispose()
     {
         DisposeAsync().AsTask().GetAwaiter().GetResult();

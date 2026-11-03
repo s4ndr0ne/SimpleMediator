@@ -51,36 +51,55 @@ internal sealed class BehaviorOrderCache
         }
 
         var entry = _entry;
-        if (entry is not null && Matches(entry, behaviors))
+        if (entry is not null && entry.Types.Length == count)
         {
+            for (var i = 0; i < count; i++)
+            {
+                var behavior = behaviors[i];
+                var type = behavior.GetType();
+                var currentOrder = behavior.Order;
+                if (!ReferenceEquals(entry.Types[i], type) ||
+                    entry.Orders[i] != currentOrder)
+                {
+                    return ComputeAndStoreFromMismatch(behaviors, entry, i, type, currentOrder);
+                }
+            }
+
             return entry.Order;
         }
 
         return ComputeAndStore(behaviors);
     }
 
-    private static bool Matches<TBehavior>(
-        Entry entry,
-        IReadOnlyList<TBehavior> behaviors)
+    private int[] ComputeAndStoreFromMismatch<TBehavior>(
+        IReadOnlyList<TBehavior> behaviors,
+        Entry previous,
+        int mismatchIndex,
+        Type mismatchType,
+        int mismatchOrder)
         where TBehavior : IOrderedPipelineBehavior
     {
         var count = behaviors.Count;
-        if (entry.Types.Length != count)
+        var types = new Type[count];
+        var orders = new int[count];
+
+        if (mismatchIndex > 0)
         {
-            return false;
+            Array.Copy(previous.Types, 0, types, 0, mismatchIndex);
+            Array.Copy(previous.Orders, 0, orders, 0, mismatchIndex);
         }
 
-        for (var i = 0; i < count; i++)
+        types[mismatchIndex] = mismatchType;
+        orders[mismatchIndex] = mismatchOrder;
+
+        for (var i = mismatchIndex + 1; i < count; i++)
         {
             var behavior = behaviors[i];
-            if (!ReferenceEquals(entry.Types[i], behavior.GetType()) ||
-                entry.Orders[i] != behavior.Order)
-            {
-                return false;
-            }
+            types[i] = behavior.GetType();
+            orders[i] = behavior.Order;
         }
 
-        return true;
+        return SortAndStore(types, orders, count);
     }
 
     private int[] ComputeAndStore<TBehavior>(IReadOnlyList<TBehavior> behaviors)
@@ -100,6 +119,11 @@ internal sealed class BehaviorOrderCache
             orders[i] = behavior.Order;
         }
 
+        return SortAndStore(types, orders, count);
+    }
+
+    private int[] SortAndStore(Type[] types, int[] orders, int count)
+    {
         var order = new int[count];
         for (var i = 0; i < count; i++)
         {

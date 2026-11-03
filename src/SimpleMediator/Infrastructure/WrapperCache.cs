@@ -15,10 +15,27 @@ namespace SimpleMediator.Infrastructure;
 /// </remarks>
 internal sealed class WrapperCache<TKey> where TKey : notnull
 {
+    private readonly ConcurrentDictionary<Type, object> _byPrimaryType = new();
     private readonly ConcurrentDictionary<TKey, object> _resolved = new();
     private readonly ConcurrentDictionary<TKey, Lazy<object>> _entries = new();
 
     internal int Count => _resolved.Count;
+
+    public TWrapper GetOrAddByPrimaryType<TWrapper>(
+        Type primaryType,
+        TKey fullKey,
+        Func<TKey, object> factory)
+        where TWrapper : class
+    {
+        if (_byPrimaryType.TryGetValue(primaryType, out var existing) && existing is TWrapper typedExisting)
+        {
+            return typedExisting;
+        }
+
+        var resolved = GetOrAdd(fullKey, factory);
+        _ = _byPrimaryType.TryAdd(primaryType, resolved);
+        return (TWrapper)resolved;
+    }
 
     public object GetOrAdd(TKey key, Func<TKey, object> factory)
     {
