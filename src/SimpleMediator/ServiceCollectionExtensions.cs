@@ -180,15 +180,18 @@ public static class ServiceCollectionExtensions
             "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
             "configuration.");
 
-    internal readonly struct ServiceRegistrationIndex
+    internal struct ServiceRegistrationIndex
     {
         private readonly IServiceCollection _services;
         private readonly Dictionary<(Type ServiceType, Type ImplementationType), ServiceLifetime> _typedDescriptors;
+        private HashSet<Type>? _nonTypedServiceTypes;
 
         public ServiceRegistrationIndex(IServiceCollection services)
         {
             _services = services;
             _typedDescriptors = new Dictionary<(Type ServiceType, Type ImplementationType), ServiceLifetime>(services.Count);
+            _nonTypedServiceTypes = null;
+
             for (var i = 0; i < services.Count; i++)
             {
                 var descriptor = services[i];
@@ -197,10 +200,16 @@ public static class ServiceCollectionExtensions
                     continue;
                 }
 
-                var implementationType = GetImplementationType(descriptor);
-                if (implementationType is not null)
+                var implementationType = descriptor.ImplementationType;
+                if (implementationType is not null &&
+                    implementationType != typeof(object) &&
+                    implementationType != descriptor.ServiceType)
                 {
                     _typedDescriptors[(descriptor.ServiceType, implementationType)] = descriptor.Lifetime;
+                }
+                else
+                {
+                    (_nonTypedServiceTypes ??= []).Add(descriptor.ServiceType);
                 }
             }
         }
@@ -208,8 +217,17 @@ public static class ServiceCollectionExtensions
         public void TryAddEnumerable(ServiceDescriptor descriptor)
         {
             var implementationType = descriptor.ImplementationType;
-            if (implementationType is null || descriptor.IsKeyedService)
+            if (implementationType is null ||
+                descriptor.IsKeyedService ||
+                implementationType == typeof(object) ||
+                implementationType == descriptor.ServiceType ||
+                (_nonTypedServiceTypes is not null && _nonTypedServiceTypes.Contains(descriptor.ServiceType)))
             {
+                if (implementationType is null && !descriptor.IsKeyedService)
+                {
+                    (_nonTypedServiceTypes ??= []).Add(descriptor.ServiceType);
+                }
+
                 _services.TryAddEnumerable(descriptor);
                 return;
             }
@@ -227,7 +245,11 @@ public static class ServiceCollectionExtensions
         public void AddBehaviorDescriptor(ServiceDescriptor behavior)
         {
             var implementationType = behavior.ImplementationType;
-            if (implementationType is not null && !behavior.IsKeyedService)
+            if (implementationType is not null &&
+                !behavior.IsKeyedService &&
+                implementationType != typeof(object) &&
+                implementationType != behavior.ServiceType &&
+                (_nonTypedServiceTypes is null || !_nonTypedServiceTypes.Contains(behavior.ServiceType)))
             {
                 var key = (behavior.ServiceType, implementationType);
                 if (_typedDescriptors.TryGetValue(key, out var existingLifetime))
@@ -245,31 +267,12 @@ public static class ServiceCollectionExtensions
                 return;
             }
 
+            if (implementationType is null && !behavior.IsKeyedService)
+            {
+                (_nonTypedServiceTypes ??= []).Add(behavior.ServiceType);
+            }
+
             ServiceCollectionExtensions.AddBehaviorDescriptor(_services, behavior);
-        }
-
-        private static Type? GetImplementationType(ServiceDescriptor descriptor)
-        {
-            if (descriptor.ImplementationType is not null)
-            {
-                return descriptor.ImplementationType;
-            }
-
-            if (descriptor.ImplementationInstance is not null)
-            {
-                return descriptor.ImplementationInstance.GetType();
-            }
-
-            if (descriptor.ImplementationFactory is not null)
-            {
-                var typeArguments = descriptor.ImplementationFactory.GetType().GenericTypeArguments;
-                if (typeArguments.Length == 2)
-                {
-                    return typeArguments[1];
-                }
-            }
-
-            return null;
         }
     }
 

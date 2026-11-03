@@ -449,7 +449,34 @@ public sealed class GeneratorDriverTests
         var runResult = driver.GetRunResult().Results.Single();
 
         Assert.All(
+            runResult.TrackedSteps[SimpleMediatorGenerator.BuildModelStepName].SelectMany(step => step.Outputs),
+            output => Assert.Equal(IncrementalStepRunReason.Cached, output.Reason));
+
+        Assert.All(
             runResult.TrackedOutputSteps.SelectMany(step => step.Value).SelectMany(step => step.Outputs),
             output => Assert.Equal(IncrementalStepRunReason.Cached, output.Reason));
+
+        var tree3 = CSharpSyntaxTree.ParseText(
+            InitialSource + """
+            public sealed class Pong : IRequest<string> { }
+            public sealed class PongHandler : IRequestHandler<Pong, string>
+            {
+                public Task<string> Handle(Pong request, CancellationToken cancellationToken) => Task.FromResult("ok");
+            }
+            """,
+            parseOptions);
+        var compilation3 = compilation2.ReplaceSyntaxTree(tree2, tree3);
+
+        driver = driver.RunGenerators(compilation3);
+        var runResult3 = driver.GetRunResult().Results.Single();
+
+        Assert.All(
+            runResult3.TrackedSteps[SimpleMediatorGenerator.BuildModelStepName].SelectMany(step => step.Outputs),
+            output => Assert.Equal(IncrementalStepRunReason.Modified, output.Reason));
+
+        var registrations3 = runResult3.GeneratedSources
+            .First(g => g.HintName == SimpleMediatorGenerator.RegistrationsHintName)
+            .SourceText.ToString();
+        Assert.Contains("registry.AddRequest<global::Pong, string>();", registrations3, StringComparison.Ordinal);
     }
 }

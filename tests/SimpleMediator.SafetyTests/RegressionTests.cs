@@ -309,6 +309,42 @@ public class RegressionTests
         Assert.Equal(99, StructPingNotificationHandler.LastValue);
     }
 
+    [Fact]
+    public void ServiceRegistrationIndex_DelegatesToStandardTryAddEnumerable_WhenFactoryIsRegistered()
+    {
+        var servicesWithInterfaceFactory = new ServiceCollection();
+        servicesWithInterfaceFactory.AddTransient<IRequestHandler<RegressionPingRequest, int>>(_ => new RegressionPingHandler());
+
+        Assert.Throws<RequestHandlerResolutionException>(() =>
+            servicesWithInterfaceFactory.AddSimpleMediator(options =>
+            {
+                options.ValidateOnBuild = true;
+                options.RegisterAssembly(
+                    typeof(RegressionPingHandler).Assembly,
+                    type => type == typeof(RegressionPingHandler));
+            }));
+
+        var servicesWithTypedFactory = new ServiceCollection();
+        servicesWithTypedFactory.AddTransient<IRequestHandler<RegressionPingRequest, int>, RegressionPingHandler>(_ => new RegressionPingHandler());
+        servicesWithTypedFactory.AddSimpleMediator(options =>
+            options.RegisterAssembly(
+                typeof(RegressionPingHandler).Assembly,
+                type => type == typeof(RegressionPingHandler)));
+
+        Assert.Single(servicesWithTypedFactory, d => d.ServiceType == typeof(IRequestHandler<RegressionPingRequest, int>));
+    }
+
+    [Fact]
+    public void WrapperCache_ReleasesInitializationLazyAfterResolution()
+    {
+        var cache = new WrapperCache<Type>();
+        var resolved = cache.GetOrAdd(typeof(RegressionPingRequest), static _ => new object());
+
+        Assert.NotNull(resolved);
+        Assert.Equal(1, cache.Count);
+        Assert.Equal(0, cache.InFlightCount);
+    }
+
     // ---------------------------------------------------------------------
     // Helpers and test types
     // ---------------------------------------------------------------------

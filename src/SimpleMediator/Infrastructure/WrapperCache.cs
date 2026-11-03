@@ -21,6 +21,8 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
 
     internal int Count => _resolved.Count;
 
+    internal int InFlightCount => _entries.Count;
+
     public TWrapper GetOrAddByPrimaryType<TWrapper>(
         Type primaryType,
         TKey fullKey,
@@ -54,15 +56,21 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
         if (!_entries.TryGetValue(key, out var entry))
         {
             // Lazy keeps concurrent first use single-flight: only the winning entry's factory runs.
+            // Checking _resolved inside the Lazy factory ensures that a thread arriving after the
+            // winner already published to _resolved and removed its Lazy from _entries never re-runs factory.
 #if NETSTANDARD2_0
             entry = _entries.GetOrAdd(
                 key,
-                k => new Lazy<object>(() => factory(k), LazyThreadSafetyMode.ExecutionAndPublication));
+                k => new Lazy<object>(
+                    () => _resolved.TryGetValue(k, out var existing) ? existing : factory(k),
+                    LazyThreadSafetyMode.ExecutionAndPublication));
 #else
             entry = _entries.GetOrAdd(
                 key,
-                static (k, f) => new Lazy<object>(() => f(k), LazyThreadSafetyMode.ExecutionAndPublication),
-                factory);
+                static (k, state) => new Lazy<object>(
+                    () => state.Resolved.TryGetValue(k, out var existing) ? existing : state.Factory(k),
+                    LazyThreadSafetyMode.ExecutionAndPublication),
+                (Resolved: _resolved, Factory: factory));
 #endif
         }
 
@@ -72,16 +80,15 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
             _ = _resolved.TryAdd(key, value);
             return value;
         }
-        catch
+        finally
         {
-            // Do not poison the cache with a faulted Lazy: remove this exact entry (a concurrent
-            // replacement for the same key is preserved) so a later call can retry.
+            // Release the initialization Lazy once published in _resolved (or faulted) so long-lived
+            // caches do not retain duplicate dictionary entries or Lazy<object> instances.
 #if NETSTANDARD2_0
             _ = ((ICollection<KeyValuePair<TKey, Lazy<object>>>)_entries).Remove(new KeyValuePair<TKey, Lazy<object>>(key, entry));
 #else
             _ = _entries.TryRemove(new KeyValuePair<TKey, Lazy<object>>(key, entry));
 #endif
-            throw;
         }
     }
 }
