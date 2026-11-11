@@ -54,6 +54,17 @@ internal static class RequestHandlerPipeline
             return ExecuteWithoutBehaviors(request, handler, preList, postList, cancellationToken);
         }
 
+        if (behaviorList.Count == 1)
+        {
+            return ExecuteWithSingleBehavior(
+                request,
+                handler,
+                preList,
+                postList,
+                behaviorList[0],
+                cancellationToken);
+        }
+
         return ExecuteWithBehaviors(
             request,
             handler,
@@ -62,6 +73,27 @@ internal static class RequestHandlerPipeline
             behaviorList,
             behaviorOrderCache.GetOrder(behaviorList),
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Fast-path execution for pipelines with exactly one behavior, avoiding index permutations,
+    /// sorting cache reads, and multiple step delegate allocations.
+    /// </summary>
+    public static Task<TResponse> ExecuteWithSingleBehavior<TRequest, TResponse>(
+        TRequest request,
+        IRequestHandler<TRequest, TResponse> handler,
+        IReadOnlyList<IPreRequestHandler<TRequest, TResponse>> preHandlers,
+        IReadOnlyList<IPostRequestHandler<TRequest, TResponse>> postHandlers,
+        IPipelineBehavior<TRequest, TResponse> behavior,
+        CancellationToken cancellationToken)
+        where TRequest : IRequest<TResponse>
+    {
+        RequestHandlerDelegate<TResponse> next = preHandlers.Count == 0 && postHandlers.Count == 0
+            ? new TerminalHandlerStep<TRequest, TResponse>(request, handler).Invoke
+            : new PrePostHandlerStep<TRequest, TResponse>(request, handler, preHandlers, postHandlers).Invoke;
+
+        return behavior.Handle(request, next, cancellationToken)
+               ?? throw NullTaskException(behavior);
     }
 
     private static async Task<TResponse> ExecuteWithoutBehaviors<TRequest, TResponse>(

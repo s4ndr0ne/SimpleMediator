@@ -26,12 +26,21 @@ internal static class RequestHandlerResolver
         // Once the first request for (TRequest, TResponse) has confirmed that the container holds
         // exactly one closed DI handler and zero custom open-generic matches, resolve the single
         // service directly to avoid the T[1] array allocation of GetServices<T>() on every Send.
-        if (Volatile.Read(ref resolutionState) == 1)
+        var state = Volatile.Read(ref resolutionState);
+        if (state == 1)
         {
             var singleHandler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>();
             if (singleHandler is not null)
             {
                 return new HandlerLease<TRequest, TResponse>(singleHandler);
+            }
+        }
+        else if (state == 3)
+        {
+            var singleVtHandler = serviceProvider.GetService<IValueTaskRequestHandler<TRequest, TResponse>>();
+            if (singleVtHandler is not null)
+            {
+                return new HandlerLease<TRequest, TResponse>(new ValueTaskRequestHandlerAdapter<TRequest, TResponse>(singleVtHandler));
             }
         }
 
@@ -66,6 +75,27 @@ internal static class RequestHandlerResolver
             }
         }
 
+        var vtCandidates = serviceProvider.GetServices<IValueTaskRequestHandler<TRequest, TResponse>>();
+        if (vtCandidates is IReadOnlyList<IValueTaskRequestHandler<TRequest, TResponse>> vtCandidateList)
+        {
+            if (closedHandlerCount == 0 && vtCandidateList.Count > 0)
+            {
+                closedHandler = new ValueTaskRequestHandlerAdapter<TRequest, TResponse>(vtCandidateList[0]);
+            }
+            closedHandlerCount += vtCandidateList.Count;
+        }
+        else
+        {
+            foreach (var candidate in vtCandidates)
+            {
+                closedHandlerCount++;
+                if (closedHandlerCount == 1)
+                {
+                    closedHandler = new ValueTaskRequestHandlerAdapter<TRequest, TResponse>(candidate);
+                }
+            }
+        }
+
         configuration ??= serviceProvider.GetService<MediatorConfiguration>();
         var openMatches = configuration is { CustomOpenGenericRequestHandlers.Count: > 0 }
             ? ResolveCustomOpenGeneric(configuration, typeof(TRequest), typeof(TResponse))
@@ -88,7 +118,9 @@ internal static class RequestHandlerResolver
 
         if (Volatile.Read(ref resolutionState) == 0)
         {
-            Volatile.Write(ref resolutionState, closedHandlerCount == 1 ? 1 : 2);
+            Volatile.Write(ref resolutionState, closedHandlerCount == 1
+                ? closedHandler is ValueTaskRequestHandlerAdapter<TRequest, TResponse> ? 3 : 1
+                : 2);
         }
 
         if (closedHandlerCount == 1)
@@ -176,6 +208,19 @@ internal static class RequestHandlerResolver
                 default:
                     return default;
             }
+        }
+    }
+
+    internal sealed class ValueTaskRequestHandlerAdapter<TRequest, TResponse>(
+        IValueTaskRequestHandler<TRequest, TResponse> inner) : IRequestHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>
+    {
+        public IValueTaskRequestHandler<TRequest, TResponse> Inner => inner;
+
+        public Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken)
+        {
+            var vt = inner.Handle(request, cancellationToken);
+            return vt.IsCompletedSuccessfully ? Task.FromResult(vt.Result) : vt.AsTask();
         }
     }
 }

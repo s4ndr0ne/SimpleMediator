@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **`IValueTaskRequestHandler<TRequest, TResponse>` & `SendValueTask`:** added `IValueTaskRequestHandler<in TRequest, TResponse>` in `SimpleMediator.Interfaces` and `SendValueTask<TResponse>` (both on `Mediator` and as an extension method on `ISender`), enabling zero-allocation synchronous completion for high-throughput request/response workflows without `Task<TResponse>` heap allocations.
+- Automatic adapter support for `IValueTaskRequestHandler` in standard `ISender.Send` dispatch and DI assembly scanning.
+
+### Changed
+- **Performance (Single-behavior fast path & zero array allocation):** when a request pipeline has exactly one registered `IPipelineBehavior`, `RequestHandlerWrapperImpl` resolves it directly via `GetService<T>()` rather than `GetServices<T>()`, eliminating Microsoft DI's per-request `T[1]` array allocation and avoiding permutation order cache lookups.
+- **Performance (Dedicated single-behavior pipeline execution):** `RequestHandlerPipeline.ExecuteWithSingleBehavior` bypasses step loops and multiple delegate allocations when executing a single behavior without pre/post-handlers.
+
 ## [4.2.1] - 2026-11-03
 
 ### Changed

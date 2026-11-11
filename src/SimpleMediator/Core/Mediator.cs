@@ -125,6 +125,28 @@ public class Mediator : IMediator
         return handler.Handle(request, _serviceProvider, cancellationToken);
     }
 
+    /// <summary>
+    /// Asynchronously sends a request to its handler returning a <see cref="ValueTask{TResponse}"/>.
+    /// Enables zero-allocation execution for handlers implementing <see cref="IValueTaskRequestHandler{TRequest, TResponse}"/>.
+    /// </summary>
+    /// <typeparam name="TResponse">The type of the expected response.</typeparam>
+    /// <param name="request">The request to process.</param>
+    /// <param name="cancellationToken">An optional cancellation token.</param>
+    /// <returns>A value task representing the asynchronous operation that yields the response.</returns>
+    public ValueTask<TResponse> SendValueTask<TResponse>(IRequest<TResponse> request, CancellationToken cancellationToken = default)
+    {
+        ThrowHelper.ThrowIfNull(request);
+
+        var requestType = request.GetType();
+
+        var handler = _requestHandlerWrappers.GetOrAddByPrimaryType<RequestHandlerWrapper<TResponse>>(
+            requestType,
+            (requestType, typeof(TResponse)),
+            _requestWrapperFactory);
+
+        return handler.HandleValueTask(request, _serviceProvider, cancellationToken);
+    }
+
     /// <inheritdoc />
     public IAsyncEnumerable<TResponse> CreateStream<TResponse>(IStreamRequest<TResponse> request, CancellationToken cancellationToken = default)
     {

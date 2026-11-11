@@ -30,8 +30,10 @@ internal sealed class KnownSymbols
         "System.Reflection.TypeInfo",
     ];
 
-    private KnownSymbols(INamedTypeSymbol[] symbols)
+    private KnownSymbols(INamedTypeSymbol[] symbols, INamedTypeSymbol? valueTaskRequestHandler, INamedTypeSymbol? senderExtensions)
     {
+        ValueTaskRequestHandler = valueTaskRequestHandler;
+        SenderExtensions = senderExtensions;
         Request = symbols[0];
         StreamRequest = symbols[1];
         Notification = symbols[2];
@@ -60,6 +62,10 @@ internal sealed class KnownSymbols
     public INamedTypeSymbol Notification { get; }
 
     public INamedTypeSymbol RequestHandler { get; }
+
+    public INamedTypeSymbol? ValueTaskRequestHandler { get; }
+
+    public INamedTypeSymbol? SenderExtensions { get; }
 
     public INamedTypeSymbol StreamRequestHandler { get; }
 
@@ -114,7 +120,9 @@ internal sealed class KnownSymbols
             symbols[i] = symbol;
         }
 
-        return new KnownSymbols(symbols);
+        return new KnownSymbols(symbols,
+            compilation.GetTypeByMetadataName("SimpleMediator.Interfaces.IValueTaskRequestHandler`2"),
+            compilation.GetTypeByMetadataName("SimpleMediator.SenderExtensions"));
     }
 
     /// <summary>
@@ -123,6 +131,7 @@ internal sealed class KnownSymbols
     /// </summary>
     public bool IsHandlerInterface(INamedTypeSymbol definition)
         => Equal(definition, RequestHandler) ||
+           Equal(definition, ValueTaskRequestHandler) ||
            Equal(definition, StreamRequestHandler) ||
            Equal(definition, NotificationHandler) ||
            Equal(definition, PreRequestHandler) ||
@@ -137,6 +146,7 @@ internal sealed class KnownSymbols
     /// <summary>Handler/behavior interfaces whose type arguments are (request, response).</summary>
     public bool IsRequestShapedInterface(INamedTypeSymbol definition)
         => Equal(definition, RequestHandler) ||
+           Equal(definition, ValueTaskRequestHandler) ||
            Equal(definition, PreRequestHandler) ||
            Equal(definition, PostRequestHandler) ||
            Equal(definition, RequestExceptionHandler) ||

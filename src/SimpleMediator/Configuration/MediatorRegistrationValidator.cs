@@ -23,7 +23,7 @@ internal static class MediatorRegistrationValidator
             // separate registrations and cannot make that lookup ambiguous.
             .Where(descriptor => !descriptor.IsKeyedService &&
                                  OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
-            .GroupBy(descriptor => descriptor.ServiceType)
+            .GroupBy(descriptor => typeof(IRequestHandler<,>).MakeGenericType(descriptor.ServiceType.GetGenericArguments()))
             .ToList();
 
         foreach (var group in requestHandlerGroups)
@@ -279,22 +279,22 @@ internal static class MediatorRegistrationValidator
     {
         var nativeOpenGenericHandlers = services
             .Where(descriptor => !descriptor.IsKeyedService &&
-                                 descriptor.ServiceType == typeof(IRequestHandler<,>)
+                                 (descriptor.ServiceType == typeof(IRequestHandler<,>) ||
+                                  descriptor.ServiceType == typeof(IValueTaskRequestHandler<,>))
                                  && descriptor.ImplementationType is { IsGenericTypeDefinition: true })
-            .Select(descriptor => descriptor.ImplementationType!)
             .ToArray();
 
         foreach (var group in requestHandlerGroups)
         {
             var typeArguments = group.Key.GetGenericArguments();
-            var matchingOpenHandler = nativeOpenGenericHandlers.FirstOrDefault(implementationType =>
-                CanCloseNativeOpenGenericHandler(implementationType, typeArguments[0], typeArguments[1]));
+            var matchingOpenHandler = nativeOpenGenericHandlers.FirstOrDefault(descriptor =>
+                CanCloseNativeOpenGenericHandler(descriptor.ImplementationType!, descriptor.ServiceType, typeArguments[0], typeArguments[1]));
 
             if (matchingOpenHandler is not null)
             {
                 throw new Core.RequestHandlerResolutionException(
                     $"Request '{typeArguments[0].FullName}' is matched by both a closed handler and the native open-generic DI handler " +
-                    $"'{matchingOpenHandler.FullName}'. A request can only have one handler.");
+                    $"'{matchingOpenHandler.ImplementationType!.FullName}'. A request can only have one handler.");
             }
         }
     }
@@ -411,7 +411,7 @@ internal static class MediatorRegistrationValidator
 
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
-    private static bool CanCloseNativeOpenGenericHandler(Type implementationType, Type requestType, Type responseType)
+    private static bool CanCloseNativeOpenGenericHandler(Type implementationType, Type serviceDefinition, Type requestType, Type responseType)
     {
         if (implementationType.GetGenericArguments().Length != 2)
         {
@@ -428,7 +428,7 @@ internal static class MediatorRegistrationValidator
             return false;
         }
 
-        var closedService = typeof(IRequestHandler<,>).MakeGenericType(requestType, responseType);
+        var closedService = serviceDefinition.MakeGenericType(requestType, responseType);
         return closedService.IsAssignableFrom(closedImplementation);
     }
 

@@ -130,6 +130,43 @@ public sealed class GeneratorDriverTests
     }
 
     [Fact]
+    public void Value_task_handlers_are_registered_and_conflicts_are_reported()
+    {
+        var result = Run(Composition + """
+            public sealed class Ping : IRequest<int> { }
+            public sealed class TaskHandler : IRequestHandler<Ping, int>
+            {
+                public Task<int> Handle(Ping request, CancellationToken token) => Task.FromResult(1);
+            }
+            public sealed class ValueHandler : IValueTaskRequestHandler<Ping, int>
+            {
+                public ValueTask<int> Handle(Ping request, CancellationToken token) => new ValueTask<int>(2);
+            }
+            """);
+
+        Assert.Contains("SMG001", result.Ids);
+        Assert.Contains("registry.AddHandler<global::SimpleMediator.Interfaces.IValueTaskRequestHandler<global::Ping, int>, global::ValueHandler>", result.Registrations, StringComparison.Ordinal);
+        Assert.Empty(result.CompilationErrors);
+    }
+
+    [Fact]
+    public void Value_task_send_discovers_generic_requests_in_extension_and_static_calls()
+    {
+        var result = Run(Composition + """
+            public sealed class Box<T> : IRequest<T> { }
+            public static class Usage
+            {
+                public static ValueTask<int> Reduced(ISender sender) => sender.SendValueTask(new Box<int>());
+                public static ValueTask<string> Static(ISender sender) => SenderExtensions.SendValueTask(sender, new Box<string>());
+            }
+            """);
+
+        Assert.Empty(result.CompilationErrors);
+        Assert.Contains("registry.AddRequest<global::Box<int>, int>();", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddRequest<global::Box<string>, string>();", result.Registrations, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Inaccessible_handler_is_reported_and_skipped()
     {
         var result = Run(Composition + """

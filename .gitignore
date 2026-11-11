@@ -482,3 +482,7 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+graphify-out/
+.agents/
+.codex/
+AGENTS.md

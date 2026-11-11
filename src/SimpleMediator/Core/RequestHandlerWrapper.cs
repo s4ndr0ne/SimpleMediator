@@ -8,6 +8,9 @@ namespace SimpleMediator.Core;
 internal abstract class RequestHandlerWrapper<TResponse>
 {
     public abstract Task<TResponse> Handle(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken);
+
+    public virtual ValueTask<TResponse> HandleValueTask(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+        => new(Handle(request, serviceProvider, cancellationToken));
 }
 
 internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrapper<TResponse>
@@ -16,12 +19,13 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     private readonly MediatorConfiguration? _configuration;
     private readonly BehaviorOrderCache _behaviorOrder = new();
 
-    // Tri-state probes (0 = unknown, 1 = none/single-closed confirmed, 2 = full path required) per
+    // Probe state per
     // closed (TRequest, TResponse) wrapper. Since a ServiceProvider's registrations are immutable
     // once built, the first request for a given (TRequest, TResponse) probes the container once;
     // subsequent requests skip GetServices<...>() completely when none are registered, saving
     // array allocations and dictionary lookups per Send while still honoring services added to
     // IServiceCollection AFTER AddSimpleMediator(...).
+    // Handler: 0 = unknown, 1 = single Task handler, 2 = custom open handler, 3 = single ValueTask handler.
     private int _handlerResolutionState;
     private int _preHandlerState;
     private int _postHandlerState;
@@ -63,6 +67,65 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         return HandleCore(typedRequest, serviceProvider, configuration, cancellationToken);
     }
 
+    public override ValueTask<TResponse> HandleValueTask(object request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var typedRequest = (TRequest)request;
+        var configuration = _configuration ?? serviceProvider.GetService<MediatorConfiguration>();
+#if !NETSTANDARD2_0
+        if (configuration is { EnableTelemetry: true } && SimpleMediatorDiagnostics.HasTelemetryListeners())
+        {
+            return new ValueTask<TResponse>(Handle(request, serviceProvider, cancellationToken));
+        }
+#endif
+        if (Volatile.Read(ref _fastPathState) == 1 && Volatile.Read(ref _handlerResolutionState) == 3)
+        {
+            try
+            {
+                var vtHandler = serviceProvider.GetService<IValueTaskRequestHandler<TRequest, TResponse>>();
+                if (vtHandler is not null)
+                {
+                    var result = vtHandler.Handle(typedRequest, cancellationToken);
+                    return result.IsCompletedSuccessfully
+                        ? result
+                        : AwaitValueTaskAsync(typedRequest, result, serviceProvider, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (RequestHandlerResolutionException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                return new ValueTask<TResponse>(RequestHandlerPipeline.HandleExceptionAsync<TRequest, TResponse>(
+                    typedRequest, exception, serviceProvider, cancellationToken));
+            }
+        }
+
+        return new ValueTask<TResponse>(Handle(request, serviceProvider, cancellationToken));
+    }
+
+    private static async ValueTask<TResponse> AwaitValueTaskAsync(
+        TRequest request, ValueTask<TResponse> result, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await result.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return await RequestHandlerPipeline.HandleExceptionAsync<TRequest, TResponse>(
+                request, exception, serviceProvider, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private Task<TResponse> HandleFastPath(
         TRequest typedRequest,
         IServiceProvider serviceProvider,
@@ -70,8 +133,10 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     {
         try
         {
-            var handler = serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>()
-                          ?? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration).Handler;
+            var handler = Volatile.Read(ref _handlerResolutionState) == 3
+                ? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration, ref _handlerResolutionState).Handler
+                : serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>()
+                  ?? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration).Handler;
             var task = handler.Handle(typedRequest, cancellationToken)
                        ?? throw RequestHandlerPipeline.NullTaskException(handler);
 
@@ -144,6 +209,31 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
 
             var preHandlers = ResolveOrSkip(serviceProvider, ref _preHandlerState, static sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>());
             var postHandlers = ResolveOrSkip(serviceProvider, ref _postHandlerState, static sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>());
+
+            // If exactly one behavior is registered, resolve it directly via GetService<T>() to avoid
+            // the per-request T[1] array allocation of GetServices<T>() and bypass permutation ordering.
+            if (Volatile.Read(ref _behaviorState) == 2)
+            {
+                var singleBehavior = serviceProvider.GetService<IPipelineBehavior<TRequest, TResponse>>();
+                if (singleBehavior is not null)
+                {
+                    var singleTask = RequestHandlerPipeline.ExecuteWithSingleBehavior(
+                        typedRequest,
+                        handlerLease.Handler,
+                        preHandlers,
+                        postHandlers,
+                        singleBehavior,
+                        cancellationToken);
+
+                    if (singleTask.Status == TaskStatus.RanToCompletion)
+                    {
+                        return singleTask;
+                    }
+
+                    return AwaitFastPathAsync(typedRequest, singleTask, serviceProvider, cancellationToken);
+                }
+            }
+
             var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());
 
             if (Volatile.Read(ref _fastPathState) == 0 &&
@@ -153,7 +243,7 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
                 Volatile.Read(ref _behaviorState) != 0)
             {
                 var canFastPath =
-                    Volatile.Read(ref _handlerResolutionState) == 1 &&
+                    Volatile.Read(ref _handlerResolutionState) is 1 or 3 &&
                     Volatile.Read(ref _preHandlerState) == 1 &&
                     Volatile.Read(ref _postHandlerState) == 1 &&
                     Volatile.Read(ref _behaviorState) == 1;
@@ -207,6 +297,24 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         {
             var preHandlers = ResolveOrSkip(serviceProvider, ref _preHandlerState, static sp => sp.GetServices<IPreRequestHandler<TRequest, TResponse>>());
             var postHandlers = ResolveOrSkip(serviceProvider, ref _postHandlerState, static sp => sp.GetServices<IPostRequestHandler<TRequest, TResponse>>());
+
+            // If exactly one behavior is registered, resolve it directly via GetService<T>() to avoid
+            // the per-request T[1] array allocation of GetServices<T>() and bypass permutation ordering.
+            if (Volatile.Read(ref _behaviorState) == 2)
+            {
+                var singleBehavior = serviceProvider.GetService<IPipelineBehavior<TRequest, TResponse>>();
+                if (singleBehavior is not null)
+                {
+                    return await RequestHandlerPipeline.ExecuteWithSingleBehavior(
+                        typedRequest,
+                        handlerLease.Handler,
+                        preHandlers,
+                        postHandlers,
+                        singleBehavior,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());
 
             if (Volatile.Read(ref _fastPathState) == 0)
@@ -247,16 +355,23 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
         ref int state,
         Func<IServiceProvider, IEnumerable<TService>> resolver)
     {
-        if (Volatile.Read(ref state) == 1)
+        var currentState = Volatile.Read(ref state);
+        if (currentState == 1)
         {
             return Array.Empty<TService>();
         }
 
         var resolved = resolver(serviceProvider);
         var list = resolved as IReadOnlyList<TService> ?? resolved.ToArray();
-        if (Volatile.Read(ref state) == 0)
+        if (currentState == 0)
         {
-            Volatile.Write(ref state, list.Count == 0 ? 1 : 2);
+            var nextState = list.Count switch
+            {
+                0 => 1,
+                1 => 2,
+                _ => 3
+            };
+            Volatile.Write(ref state, nextState);
         }
 
         return list;

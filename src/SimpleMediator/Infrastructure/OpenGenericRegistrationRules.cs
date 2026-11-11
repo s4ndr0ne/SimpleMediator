@@ -12,6 +12,7 @@ internal static class OpenGenericRegistrationRules
     private static readonly Type[] SupportedHandlerInterfaces =
     [
         typeof(IRequestHandler<,>),
+        typeof(IValueTaskRequestHandler<,>),
         typeof(IStreamRequestHandler<,>),
         typeof(INotificationHandler<>),
         typeof(IPreRequestHandler<,>),
@@ -21,6 +22,7 @@ internal static class OpenGenericRegistrationRules
 
     internal static bool IsSupportedOpenGenericService(Type serviceTypeDefinition)
         => serviceTypeDefinition == typeof(IRequestHandler<,>)
+           || serviceTypeDefinition == typeof(IValueTaskRequestHandler<,>)
            || serviceTypeDefinition == typeof(IStreamRequestHandler<,>)
            || serviceTypeDefinition == typeof(INotificationHandler<>)
            || serviceTypeDefinition == typeof(IPreRequestHandler<,>)
@@ -60,7 +62,8 @@ internal static class OpenGenericRegistrationRules
     internal static bool IsClosedRequestHandler(Type serviceType)
         => serviceType.IsGenericType
            && !serviceType.ContainsGenericParameters
-           && serviceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>);
+           && (serviceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>) ||
+               serviceType.GetGenericTypeDefinition() == typeof(IValueTaskRequestHandler<,>));
 
     internal static bool IsClosedStreamRequestHandler(Type serviceType)
         => serviceType.IsGenericType

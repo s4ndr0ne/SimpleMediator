@@ -232,6 +232,19 @@ internal sealed class ModelBuilder
                 }
 
                 break;
+
+            case "SendValueTask":
+                var original = method.ReducedFrom ?? method;
+                var isExtension = _known.SenderExtensions is not null && KnownSymbols.Equal(original.ContainingType, _known.SenderExtensions);
+                var argument = isExtension && method.ReducedFrom is null
+                    ? invocation.ArgumentList.Arguments.Skip(1).FirstOrDefault()?.Expression
+                    : firstArgument;
+                if (argument is not null && (isExtension || IsMemberOf(method, _known.Sender)) &&
+                    semanticModel.GetTypeInfo(argument, _cancellationToken).Type is { } requestType)
+                {
+                    messageCandidates.Add((requestType, argument.GetLocation()));
+                }
+                break;
         }
     }
 
@@ -577,22 +590,23 @@ internal sealed class ModelBuilder
                     registrations.Add(new Registration(renderedService, renderedImplementation, key));
 
                     if (KnownSymbols.Equal(service.OriginalDefinition, _known.RequestHandler) ||
+                        KnownSymbols.Equal(service.OriginalDefinition, _known.ValueTaskRequestHandler) ||
                         KnownSymbols.Equal(service.OriginalDefinition, _known.StreamRequestHandler))
                     {
-                        if (!requestHandlers.TryGetValue(renderedService, out var entry))
+                        var handlerKey = KnownSymbols.Equal(service.OriginalDefinition, _known.StreamRequestHandler)
+                            ? "stream|" + Render(service.TypeArguments[0]) + "|" + Render(service.TypeArguments[1])
+                            : "request|" + Render(service.TypeArguments[0]) + "|" + Render(service.TypeArguments[1]);
+                        if (!requestHandlers.TryGetValue(handlerKey, out var entry))
                         {
                             entry = (service, []);
-                            requestHandlers.Add(renderedService, entry);
+                            requestHandlers.Add(handlerKey, entry);
                         }
 
                         var implementations = entry.Implementations;
 
-                        if (!implementations.Any(existing => existing.Implementation == renderedImplementation))
-                        {
-                            implementations.Add((renderedImplementation,
-                                type.Locations.FirstOrDefault(location => location.IsInSource),
-                                type.ContainingAssembly!));
-                        }
+                        implementations.Add((renderedImplementation,
+                            type.Locations.FirstOrDefault(location => location.IsInSource),
+                            type.ContainingAssembly!));
                     }
                 }
             }

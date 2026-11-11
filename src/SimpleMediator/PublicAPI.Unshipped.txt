@@ -1,1 +1,6 @@
 #nullable enable
+SimpleMediator.Core.Mediator.SendValueTask<TResponse>(SimpleMediator.Interfaces.IRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TResponse>
+SimpleMediator.Interfaces.IValueTaskRequestHandler<TRequest, TResponse>
+SimpleMediator.Interfaces.IValueTaskRequestHandler<TRequest, TResponse>.Handle(TRequest request, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.ValueTask<TResponse>
+SimpleMediator.SenderExtensions
+static SimpleMediator.SenderExtensions.SendValueTask<TResponse>(this SimpleMediator.Interfaces.ISender! sender, SimpleMediator.Interfaces.IRequest<TResponse>! request, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.ValueTask<TResponse>

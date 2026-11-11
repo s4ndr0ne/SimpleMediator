@@ -14,7 +14,7 @@ SimpleMediator focuses on predictable behaviour rather than raw speed: correct D
 
 ## Core Features & Optimizations
 
-- **🚀 Cached Dispatch & Zero-Allocation Fast Path**: One typed wrapper per request/stream/notification type is created on first use and cached, so steady-state dispatch involves no reflection. On the first call for a given `(TRequest, TResponse)`, the wrapper probes whether pre-handlers, post-handlers, or pipeline behaviors exist; when none are registered, subsequent calls skip `GetServices<...>()` array allocations and async state machines entirely.
+- **🚀 Cached Dispatch & Zero-Allocation Fast Path**: One typed wrapper per request/stream/notification type is created on first use and cached, so steady-state dispatch involves no reflection. On the first call for a given `(TRequest, TResponse)`, the wrapper probes whether pre-handlers, post-handlers, or pipeline behaviors exist; when none are registered, subsequent calls skip `GetServices<...>()` array allocations and async state machines entirely. For single-behavior pipelines, it resolves via direct `GetService<T>()` eliminating array allocations, with dedicated zero-loop execution. Synchronous handlers can implement `IValueTaskRequestHandler<,>` and be dispatched via `ISender.SendValueTask` for zero-allocation completions.
 - **🛡️ Scope Correctness**: Scoped services (like `DbContext` or `UnitOfWork`) are shared correctly between your controllers and handlers, and resolving the mediator from the root provider — which would silently turn every one of them into a process-wide singleton — throws `MediatorScopeException` when it is resolved. See [Resolve the mediator from a scope](#2-resolve-the-mediator-from-a-scope-not-from-the-root).
 - **✂️ Segregated interfaces**: depend on `ISender` (requests and streams) or `IPublisher` (notifications) instead of the full `IMediator`.
 - **🌊 Async Streaming (`IStreamRequest<TResponse>`)**: First-class `IAsyncEnumerable<TResponse>` streaming via `ISender.CreateStream`, complete with ordered `IStreamPipelineBehavior<TRequest, TResponse>` and full Source Generator / Native AOT support.
@@ -163,7 +163,7 @@ the returned `IMediatorScope` exposes `Mediator` and `ServiceProvider` and imple
 
 | Interface | Members | Typical consumer |
 |---|---|---|
-| `ISender` | `Send<TResponse>(IRequest<TResponse>)`, `Send(IRequest)`, `CreateStream<TResponse>(IStreamRequest<TResponse>)` | controllers, endpoints, application services |
+| `ISender` | `Send<TResponse>(IRequest<TResponse>)`, `Send(IRequest)`, `SendValueTask<TResponse>(IRequest<TResponse>)` (extension), `CreateStream<TResponse>(IStreamRequest<TResponse>)` | controllers, endpoints, application services |
 | `IPublisher` | `Publish<TNotification>(TNotification)` | domain-event dispatchers, outbox relays |
 | `IMediator : ISender, IPublisher` | all of the above | components that need both |
 
@@ -214,6 +214,28 @@ var response = await mediator.Send(new PingRequest("Hello"));
 > source-generated `AddSimpleMediatorGenerated` instead; see [AOT & Trimming](#aot--trimming).
 
 > **Request matching is exact.** Dispatch uses the request's concrete runtime type, so a handler registered for a base request does not handle a derived request. Although `IRequestHandler<in TRequest, TResponse>` is contravariant, the built-in DI lookup used by the mediator resolves the exact closed request type.
+
+#### Zero-Allocation Synchronous Handlers (`IValueTaskRequestHandler<,>`)
+For high-throughput endpoints or in-memory operations where requests often complete synchronously without awaiting asynchronous I/O, implement `IValueTaskRequestHandler<TRequest, TResponse>`:
+
+```csharp
+// 1. Define Request
+public record PingRequest(string Message) : IRequest<string>;
+
+// 2. Define ValueTask Handler
+public class PingRequestHandler : IValueTaskRequestHandler<PingRequest, string>
+{
+    public ValueTask<string> Handle(PingRequest request, CancellationToken ct)
+        => new($"Pong: {request.Message}"); // Zero Task allocation
+}
+
+// 3. Send via ISender / IMediator
+// Zero-allocation path:
+ValueTask<string> response = sender.SendValueTask(new PingRequest("Hello"));
+
+// Standard Send is also compatible (automatically adapted):
+string responseSync = await sender.Send(new PingRequest("Hello"));
+```
 
 ### Streaming (`IStreamRequest<TResponse>`)
 Stream requests return an `IAsyncEnumerable<TResponse>` for progressive/chunked results (e.g., LLM token streams, large dataset queries, SSE endpoints).
@@ -750,7 +772,9 @@ Per `Send`, on top of your handler's own work, SimpleMediator performs:
 - one cache lookup keyed by `(requestType, responseType)` — lock-free on the hot path (with `MediatorConfiguration` already captured by the wrapper, avoiding any per-call `GetService<MediatorConfiguration>()` lookup);
 - `GetServices<IRequestHandler<,>>()` for handler selection;
 - **Fast path (no pre/post handlers or pipeline behaviors for `(TRequest, TResponse)`)**: after the first request probes the container once, subsequent requests skip `GetServices<IPreRequestHandler<,>>()`, `GetServices<IPostRequestHandler<,>>()` and `GetServices<IPipelineBehavior<,>>()` completely (0 array allocations, 0 extra DI lookups) and return the handler's `Task<TResponse>` directly without an `async` state machine when it completes synchronously;
-- **Pipeline path (when behaviors or pre/post handlers exist)**: resolves the registered behaviors/hooks, allocates one handler delegate plus one closure per behavior, snapshots `Order` (sorting only when registration order is not already sorted), and awaits the behavior chain.
+- **Single-behavior fast path**: when exactly one pipeline behavior is registered (without pre/post-handlers), it is resolved directly via `GetService<IPipelineBehavior<,>>()` bypassing Microsoft DI's `T[1]` array allocation and order-cache lookups, and runs through `ExecuteWithSingleBehavior` with no step loop or delegate chain allocations;
+- **Pipeline path (when multiple behaviors or pre/post handlers exist)**: resolves the registered behaviors/hooks, allocates one handler delegate plus one closure per behavior, snapshots `Order` (sorting only when registration order is not already sorted), and awaits the behavior chain;
+- **Synchronous zero-allocation dispatch**: handlers implementing `IValueTaskRequestHandler<,>` called via `ISender.SendValueTask` return `ValueTask<TResponse>` directly without allocating heap `Task<TResponse>` objects when completing synchronously.
 
 Resolving the mediator itself (it is transient) costs two lookups: the configuration and, for the root guard, `IServiceScopeFactory`.
 

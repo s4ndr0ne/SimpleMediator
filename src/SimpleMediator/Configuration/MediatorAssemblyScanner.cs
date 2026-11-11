@@ -55,6 +55,11 @@ internal static class MediatorAssemblyScanner
                          .Where(type => !type.IsAbstract && !type.IsInterface)
                          .OrderBy(type => type.FullName, StringComparer.Ordinal))
             {
+                if (type.Assembly == typeof(MediatorAssemblyScanner).Assembly)
+                {
+                    continue;
+                }
+
                 if (filter is not null && !filter(type))
                 {
                     continue;
@@ -114,6 +119,7 @@ internal static class MediatorAssemblyScanner
 
         foreach (var implementedInterface in implementedInterfaces)
         {
+            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IValueTaskRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);

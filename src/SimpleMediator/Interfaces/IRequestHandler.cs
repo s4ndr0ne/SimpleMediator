@@ -26,6 +26,24 @@ public interface IRequestHandler<in TRequest, TResponse>
 }
 
 /// <summary>
+/// Defines a handler for a request of type <typeparamref name="TRequest"/> returning <see cref="ValueTask{TResponse}"/>.
+/// Enables zero-allocation synchronous completion for cached or fast-path operations.
+/// </summary>
+/// <typeparam name="TRequest">The type of request being handled.</typeparam>
+/// <typeparam name="TResponse">The type of response produced by the handler.</typeparam>
+public interface IValueTaskRequestHandler<in TRequest, TResponse>
+    where TRequest : IRequest<TResponse>
+{
+    /// <summary>
+    /// Handles the request asynchronously returning a <see cref="ValueTask{TResponse}"/>.
+    /// </summary>
+    /// <param name="request">The incoming request.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>A value task representing the asynchronous operation that yields the response.</returns>
+    ValueTask<TResponse> Handle(TRequest request, CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Represents a delegate for the next action in the request execution pipeline.
 /// </summary>
 /// <typeparam name="TResponse">The type of response.</typeparam>

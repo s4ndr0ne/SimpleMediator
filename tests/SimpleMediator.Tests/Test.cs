@@ -2234,6 +2234,70 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
         Assert.False(u1 != u2);
     }
 
+    [Fact]
+    public async Task SingleBehavior_ExecutesFastPath_AndModifiesResponse()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<SingleBehaviorPingRequest, string>, SingleBehaviorPingHandler>();
+        services.AddTransient<IPipelineBehavior<SingleBehaviorPingRequest, string>, SinglePingTestBehavior>();
+        services.AddSimpleMediator();
+
+        using var scope = services.BuildServiceProvider().CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+
+        // Warm up and verify probing state
+        var response1 = await mediator.Send(new SingleBehaviorPingRequest("first"));
+        Assert.Equal("SingleBehavior: PONG: first", response1);
+
+        // Second request exercises single-behavior direct resolution fast-path
+        var response2 = await mediator.Send(new SingleBehaviorPingRequest("second"));
+        Assert.Equal("SingleBehavior: PONG: second", response2);
+    }
+
+    [Fact]
+    public async Task ValueTaskRequestHandler_DispatchesSyncViaSendValueTask()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IValueTaskRequestHandler<ValueTaskPingRequest, int>, SyncValueTaskPingHandler>();
+        services.AddSimpleMediator();
+
+        using var scope = services.BuildServiceProvider().CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+
+        var vt = mediator.SendValueTask(new ValueTaskPingRequest(100));
+        Assert.True(vt.IsCompletedSuccessfully);
+        var result = await vt;
+        Assert.Equal(200, result);
+    }
+
+    [Fact]
+    public async Task ValueTaskRequestHandler_DispatchesViaStandardSend()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IValueTaskRequestHandler<ValueTaskPingRequest, int>, SyncValueTaskPingHandler>();
+        services.AddSimpleMediator();
+
+        using var scope = services.BuildServiceProvider().CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+
+        var result = await mediator.Send(new ValueTaskPingRequest(42));
+        Assert.Equal(84, result);
+    }
+
+    [Fact]
+    public async Task ValueTaskRequestHandler_DispatchesAsyncViaSendValueTask()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IValueTaskRequestHandler<ValueTaskPingRequest, int>, AsyncValueTaskPingHandler>();
+        services.AddSimpleMediator();
+
+        using var scope = services.BuildServiceProvider().CreateScope();
+        var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+
+        var result = await mediator.SendValueTask(new ValueTaskPingRequest(10));
+        Assert.Equal(20, result);
+    }
+
     /// <summary>
     /// Resolves a mediator the way an application must: from a scope, never from the root provider.
     /// A root-owned mediator would turn every scoped handler dependency into a process-wide
@@ -2243,4 +2307,42 @@ services.AddTransient<INotificationHandler<TestNotification>, FirstNotificationH
     private static IMediator ResolveScopedMediator(IServiceProvider root)
         => root.CreateScope().ServiceProvider.GetRequiredService<IMediator>();
 
+}
+
+public sealed record SingleBehaviorPingRequest(string Message) : IRequest<string>;
+
+public sealed class SingleBehaviorPingHandler : IRequestHandler<SingleBehaviorPingRequest, string>
+{
+    public Task<string> Handle(SingleBehaviorPingRequest request, CancellationToken cancellationToken)
+        => Task.FromResult("PONG: " + request.Message);
+}
+
+public sealed class SinglePingTestBehavior : IPipelineBehavior<SingleBehaviorPingRequest, string>
+{
+    public int Order => 0;
+
+    public async Task<string> Handle(SingleBehaviorPingRequest request, RequestHandlerDelegate<string> next, CancellationToken cancellationToken)
+    {
+        var inner = await next(cancellationToken);
+        return "SingleBehavior: " + inner;
+    }
+}
+
+public sealed record ValueTaskPingRequest(int Number) : IRequest<int>;
+
+public sealed class SyncValueTaskPingHandler : IValueTaskRequestHandler<ValueTaskPingRequest, int>
+{
+    public ValueTask<int> Handle(ValueTaskPingRequest request, CancellationToken cancellationToken)
+    {
+        return new ValueTask<int>(request.Number * 2);
+    }
+}
+
+public sealed class AsyncValueTaskPingHandler : IValueTaskRequestHandler<ValueTaskPingRequest, int>
+{
+    public async ValueTask<int> Handle(ValueTaskPingRequest request, CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        return request.Number * 2;
+    }
 }
