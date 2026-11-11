@@ -223,12 +223,15 @@ internal sealed class ModelBuilder
 
                 break;
 
-            case "Send" when IsMemberOf(method, _known.Sender) && firstArgument is not null:
-            case "CreateStream" when IsMemberOf(method, _known.Sender) && firstArgument is not null:
-            case "Publish" when IsMemberOf(method, _known.Publisher) && firstArgument is not null:
-                if (semanticModel.GetTypeInfo(firstArgument, _cancellationToken).Type is { } messageType)
+            case "Send" when IsMemberOf(method, _known.Sender):
+            case "CreateStream" when IsMemberOf(method, _known.Sender):
+            case "Publish" when IsMemberOf(method, _known.Publisher):
+                var messageParameter = method.Name == "Publish" ? "notification" : "request";
+                var messageArgument = FindArgument(invocation, method, messageParameter);
+                if (messageArgument is not null &&
+                    semanticModel.GetTypeInfo(messageArgument, _cancellationToken).Type is { } messageType)
                 {
-                    messageCandidates.Add((messageType, firstArgument.GetLocation()));
+                    messageCandidates.Add((messageType, messageArgument.GetLocation()));
                 }
 
                 break;
@@ -236,16 +239,58 @@ internal sealed class ModelBuilder
             case "SendValueTask":
                 var original = method.ReducedFrom ?? method;
                 var isExtension = _known.SenderExtensions is not null && KnownSymbols.Equal(original.ContainingType, _known.SenderExtensions);
-                var argument = isExtension && method.ReducedFrom is null
-                    ? invocation.ArgumentList.Arguments.Skip(1).FirstOrDefault()?.Expression
-                    : firstArgument;
-                if (argument is not null && (isExtension || IsMemberOf(method, _known.Sender)) &&
-                    semanticModel.GetTypeInfo(argument, _cancellationToken).Type is { } requestType)
+                if (isExtension || IsMemberOf(method, _known.Sender))
                 {
-                    messageCandidates.Add((requestType, argument.GetLocation()));
+                    var argument = FindArgument(invocation, method, "request");
+                    if (argument is not null &&
+                        semanticModel.GetTypeInfo(argument, _cancellationToken).Type is { } requestType)
+                    {
+                        messageCandidates.Add((requestType, argument.GetLocation()));
+                    }
                 }
                 break;
         }
+    }
+
+    /// <summary>
+    /// Locates the argument passed to the parameter named <paramref name="parameterName"/>,
+    /// whether it was supplied positionally or with a named argument. Named arguments can be
+    /// reordered, so the old positional lookup silently missed requests such as
+    /// <c>mediator.Send(request: new Ping())</c>.
+    /// </summary>
+    private static ExpressionSyntax? FindArgument(
+        InvocationExpressionSyntax invocation,
+        IMethodSymbol method,
+        string parameterName)
+    {
+        var arguments = invocation.ArgumentList.Arguments;
+
+        foreach (var argument in arguments)
+        {
+            if (argument.NameColon is { } nameColon &&
+                nameColon.Name.Identifier.ValueText == parameterName)
+            {
+                return argument.Expression;
+            }
+        }
+
+        var parameter = method.Parameters.FirstOrDefault(candidate => candidate.Name == parameterName);
+        if (parameter is null)
+        {
+            return null;
+        }
+
+        // A positional argument at argument-list index i corresponds to parameter ordinal i; named
+        // arguments may be mixed in as long as they stay in their own position.
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            if (arguments[index].NameColon is null && index == parameter.Ordinal)
+            {
+                return arguments[index].Expression;
+            }
+        }
+
+        return null;
     }
 
     private static bool IsMemberOf(IMethodSymbol method, INamedTypeSymbol contract)

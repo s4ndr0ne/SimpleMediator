@@ -121,7 +121,8 @@ public static class GeneratedMediatorRegistration
     // it can see, this also covers handlers registered by hand next to the generated ones.
     private static void ValidateSingleRequestHandler(IServiceCollection services)
     {
-        var seen = new HashSet<Type>();
+        var requestKeys = new HashSet<(Type Request, Type Response)>();
+        var streamKeys = new HashSet<Type>();
         for (var i = 0; i < services.Count; i++)
         {
             var descriptor = services[i];
@@ -133,9 +134,18 @@ public static class GeneratedMediatorRegistration
             }
 
             var serviceType = descriptor.ServiceType;
-            if ((OpenGenericRegistrationRules.IsClosedRequestHandler(serviceType) ||
-                 OpenGenericRegistrationRules.IsClosedStreamRequestHandler(serviceType)) &&
-                !seen.Add(serviceType))
+            if (OpenGenericRegistrationRules.IsClosedRequestHandler(serviceType))
+            {
+                // A request served by a Task handler and a ValueTask handler is still one logical
+                // handler slot, so both interface shapes must normalize to the same key.
+                if (!requestKeys.Add(OpenGenericRegistrationRules.GetRequestHandlerKey(serviceType)))
+                {
+                    throw new RequestHandlerResolutionException(
+                        $"Multiple request handlers registered for '{serviceType.FullName}'. A request can only have one handler.");
+                }
+            }
+            else if (OpenGenericRegistrationRules.IsClosedStreamRequestHandler(serviceType) &&
+                     !streamKeys.Add(serviceType))
             {
                 throw new RequestHandlerResolutionException(
                     $"Multiple request handlers registered for '{serviceType.FullName}'. A request can only have one handler.");

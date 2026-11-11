@@ -167,6 +167,29 @@ public sealed class GeneratorDriverTests
     }
 
     [Fact]
+    public void Requests_passed_with_named_arguments_are_still_discovered()
+    {
+        var result = Run(Composition + """
+            public sealed class Box<T> : IRequest<T> { }
+            public sealed class Ping : IRequest<int> { }
+            public sealed class Notice : INotification { }
+            public static class Usage
+            {
+                public static Task<int> Named(ISender sender) => sender.Send<int>(request: new Box<int>());
+                public static ValueTask<int> NamedExtension(ISender sender) => sender.SendValueTask<int>(request: new Ping());
+                public static ValueTask<string> NamedStatic(ISender sender) => SenderExtensions.SendValueTask(sender: sender, request: new Box<string>());
+                public static Task PublishNamed(IPublisher publisher) => publisher.Publish(notification: new Notice());
+            }
+            """);
+
+        Assert.Empty(result.CompilationErrors);
+        Assert.Contains("registry.AddRequest<global::Box<int>, int>();", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddRequest<global::Box<string>, string>();", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddRequest<global::Ping, int>();", result.Registrations, StringComparison.Ordinal);
+        Assert.Contains("registry.AddNotification<global::Notice>();", result.Registrations, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Inaccessible_handler_is_reported_and_skipped()
     {
         var result = Run(Composition + """

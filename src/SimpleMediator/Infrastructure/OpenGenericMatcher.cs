@@ -8,26 +8,42 @@ namespace SimpleMediator.Infrastructure;
 /// (request, response) pair. Microsoft DI only supports open generics whose
 /// implementation type parameters line up 1:1 with the service interface, so it
 /// cannot resolve custom mappings such as
-/// <c>EchoHandler&lt;T&gt; : IRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c>.
+/// <c>EchoHandler&lt;T&gt; : IRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c> or
+/// <c>ValueTaskHandler&lt;T&gt; : IValueTaskRequestHandler&lt;EchoRequest&lt;T&gt;, T&gt;</c>.
 /// This matcher performs that unification by hand at request time.
 /// </summary>
 internal static class OpenGenericMatcher
 {
     /// <summary>
     /// Attempts to build the closed implementation type that satisfies
-    /// <c>IRequestHandler&lt;requestType, responseType&gt;</c> from the given open-generic
+    /// <c>serviceDefinition&lt;requestType, responseType&gt;</c> from the given open-generic
     /// implementation. Returns false when no implemented interface unifies or when the
     /// inferred type arguments violate the implementation's generic constraints.
     /// </summary>
+    /// <param name="openImplementation">
+    /// The open-generic handler implementation, e.g. <c>EchoHandler&lt;&gt;</c>.
+    /// </param>
+    /// <param name="serviceDefinition">
+    /// The open request-handler interface to close: <see cref="IRequestHandler{TRequest, TResponse}"/>
+    /// or <see cref="IValueTaskRequestHandler{TRequest, TResponse}"/>.
+    /// </param>
+    /// <param name="requestType">The concrete request type.</param>
+    /// <param name="responseType">The concrete response type.</param>
+    /// <param name="closedImplementation">The closed implementation type when the method returns <c>true</c>.</param>
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
-    public static bool TryClose(Type openImplementation, Type requestType, Type responseType, out Type? closedImplementation)
+    public static bool TryClose(
+        Type openImplementation,
+        Type serviceDefinition,
+        Type requestType,
+        Type responseType,
+        out Type? closedImplementation)
     {
         closedImplementation = null;
 
         foreach (var iface in openImplementation.GetInterfaces())
         {
-            if (!iface.IsGenericType || iface.GetGenericTypeDefinition() != typeof(IRequestHandler<,>))
+            if (!iface.IsGenericType || iface.GetGenericTypeDefinition() != serviceDefinition)
             {
                 continue;
             }
@@ -70,7 +86,7 @@ internal static class OpenGenericMatcher
                 continue;
             }
 
-            var target = typeof(IRequestHandler<,>).MakeGenericType(requestType, responseType);
+            var target = serviceDefinition.MakeGenericType(requestType, responseType);
             if (target.IsAssignableFrom(candidate))
             {
                 closedImplementation = candidate;
@@ -84,8 +100,9 @@ internal static class OpenGenericMatcher
     /// <summary>
     /// Validates that an open-generic request handler exposes enough information in its
     /// request/response interface pattern for <see cref="TryClose"/> to infer every
-    /// implementation type parameter. Unsupported mappings are rejected during registration
-    /// instead of being silently ignored.
+    /// implementation type parameter. Both <see cref="IRequestHandler{TRequest, TResponse}"/>
+    /// and <see cref="IValueTaskRequestHandler{TRequest, TResponse}"/> are considered.
+    /// Unsupported mappings are rejected during registration instead of being silently ignored.
     /// </summary>
     internal static bool CanInferOpenGenericRequestHandler(
         [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type openImplementation)
@@ -94,7 +111,7 @@ internal static class OpenGenericMatcher
             .GetInterfaces()
             .Where(interfaceType =>
                 interfaceType.IsGenericType &&
-                interfaceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>))
+                IsRequestHandlerDefinition(interfaceType.GetGenericTypeDefinition()))
             .ToArray();
 
         if (requestInterfaces.Length == 0)
@@ -123,6 +140,10 @@ internal static class OpenGenericMatcher
 
         return true;
     }
+
+    internal static bool IsRequestHandlerDefinition(Type serviceDefinition)
+        => serviceDefinition == typeof(IRequestHandler<,>) ||
+           serviceDefinition == typeof(IValueTaskRequestHandler<,>);
 
     private static bool TryCollectGenericParameters(Type pattern, ISet<Type> parameters)
     {

@@ -7,8 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
-- **`IValueTaskRequestHandler<TRequest, TResponse>` & `SendValueTask`:** added `IValueTaskRequestHandler<in TRequest, TResponse>` in `SimpleMediator.Interfaces` and `SendValueTask<TResponse>` (both on `Mediator` and as an extension method on `ISender`), enabling zero-allocation synchronous completion for high-throughput request/response workflows without `Task<TResponse>` heap allocations.
-- Automatic adapter support for `IValueTaskRequestHandler` in standard `ISender.Send` dispatch and DI assembly scanning.
+- **`IValueTaskRequestHandler<TRequest, TResponse>` & `SendValueTask`:** added `IValueTaskRequestHandler<in TRequest, TResponse>` in `SimpleMediator.Interfaces` and `SendValueTask<TResponse>` (both on `Mediator` and as an extension method on `ISender`), avoiding the `Task<TResponse>` heap allocation when a handler completes synchronously and no telemetry listener, pipeline behavior, or pre-/post-handler is in the way.
+- Automatic adapter support for `IValueTaskRequestHandler` in standard `ISender.Send` dispatch and DI assembly scanning, including custom-mapped open generics such as `VtHandler<T> : IValueTaskRequestHandler<EchoRequest<T>, T>`. Custom-mapped ValueTask handlers follow the configured lifetime and are disposed through the existing lifetime stores.
+
+### Fixed
+- The source generator locates the request/notification argument by parameter name, so `Send`, `SendValueTask`, `CreateStream`, and `Publish` calls that use named or reordered arguments are still discovered.
+- Duplicate-handler validation in generated mode now normalizes `IRequestHandler<,>` and `IValueTaskRequestHandler<,>` for the same request into one handler slot, matching runtime dispatch.
+- Assembly scanning no longer rejects custom-mapped `IValueTaskRequestHandler<,>` open generics, and explicitly rejects a handler that mixes native-compatible and custom-mapped request-handler interfaces.
 
 ### Changed
 - **Performance (Single-behavior fast path & zero array allocation):** when a request pipeline has exactly one registered `IPipelineBehavior`, `RequestHandlerWrapperImpl` resolves it directly via `GetService<T>()` rather than `GetServices<T>()`, eliminating Microsoft DI's per-request `T[1]` array allocation and avoiding permutation order cache lookups.

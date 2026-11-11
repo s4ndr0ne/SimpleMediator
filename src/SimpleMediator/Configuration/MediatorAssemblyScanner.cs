@@ -55,6 +55,11 @@ internal static class MediatorAssemblyScanner
                          .Where(type => !type.IsAbstract && !type.IsInterface)
                          .OrderBy(type => type.FullName, StringComparer.Ordinal))
             {
+                // Never scan SimpleMediator's own assembly. It contains no user handlers, but it
+                // does contain open-generic infrastructure such as
+                // ValueTaskRequestHandlerAdapter<,> : IRequestHandler<,>, which a whole-assembly
+                // scan would happily register as a user handler and then try to close at dispatch
+                // time. The check is intentionally assembly-wide rather than type-name-based.
                 if (type.Assembly == typeof(MediatorAssemblyScanner).Assembly)
                 {
                     continue;
@@ -117,9 +122,10 @@ internal static class MediatorAssemblyScanner
             .Where(implementedInterface => implementedInterface.IsGenericType)
             .ToArray();
 
+        // Interfaces with a fixed 1:1 generic mapping are always registered natively. The two
+        // request-handler interfaces are handled below because they may need custom inference.
         foreach (var implementedInterface in implementedInterfaces)
         {
-            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IValueTaskRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
@@ -131,21 +137,59 @@ internal static class MediatorAssemblyScanner
             .Where(implementedInterface =>
                 implementedInterface.GetGenericTypeDefinition() == typeof(IRequestHandler<,>))
             .ToArray();
+        var valueTaskRequestHandlerInterfaces = implementedInterfaces
+            .Where(implementedInterface =>
+                implementedInterface.GetGenericTypeDefinition() == typeof(IValueTaskRequestHandler<,>))
+            .ToArray();
 
-        if (requestHandlerInterfaces.Length == 0)
+        if (requestHandlerInterfaces.Length == 0 && valueTaskRequestHandlerInterfaces.Length == 0)
         {
             return;
         }
 
-        if (requestHandlerInterfaces.All(implementedInterface =>
-                OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
-                    type,
-                    implementedInterface,
-                    typeof(IRequestHandler<,>))))
+        var hasRequestHandler = requestHandlerInterfaces.Length > 0;
+        var hasValueTaskRequestHandler = valueTaskRequestHandlerInterfaces.Length > 0;
+        var requestHandlerIsNative = !hasRequestHandler || requestHandlerInterfaces.All(implementedInterface =>
+            OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+                type,
+                implementedInterface,
+                typeof(IRequestHandler<,>)));
+        var valueTaskRequestHandlerIsNative = !hasValueTaskRequestHandler || valueTaskRequestHandlerInterfaces.All(implementedInterface =>
+            OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+                type,
+                implementedInterface,
+                typeof(IValueTaskRequestHandler<,>)));
+
+        if (requestHandlerIsNative && valueTaskRequestHandlerIsNative)
         {
-            registrationIndex.TryAddEnumerable(
-                new ServiceDescriptor(typeof(IRequestHandler<,>), type, lifetime));
+            if (hasRequestHandler)
+            {
+                registrationIndex.TryAddEnumerable(
+                    new ServiceDescriptor(typeof(IRequestHandler<,>), type, lifetime));
+            }
+
+            if (hasValueTaskRequestHandler)
+            {
+                registrationIndex.TryAddEnumerable(
+                    new ServiceDescriptor(typeof(IValueTaskRequestHandler<,>), type, lifetime));
+            }
+
             return;
+        }
+
+        // A type can be custom-mapped for one handler kind and native for the other. Native DI
+        // would resolve the native half while the custom matcher resolves the other, so the
+        // request would be reported as ambiguous at dispatch time. Reject the shape at startup.
+        var requestHandlerIsCustom = hasRequestHandler && !requestHandlerIsNative;
+        var valueTaskRequestHandlerIsCustom = hasValueTaskRequestHandler && !valueTaskRequestHandlerIsNative;
+        if (hasRequestHandler && hasValueTaskRequestHandler &&
+            requestHandlerIsCustom != valueTaskRequestHandlerIsCustom)
+        {
+            throw new InvalidOperationException(
+                $"Open-generic request handler '{type.FullName}' mixes a native-compatible request-handler interface with one " +
+                "that needs custom type-argument inference. A request handler must be natively compatible with every " +
+                "IRequestHandler<TRequest, TResponse> and IValueTaskRequestHandler<TRequest, TResponse> interface it implements, " +
+                "or it must be registered as closed types.");
         }
 
         if (!OpenGenericMatcher.CanInferOpenGenericRequestHandler(type))

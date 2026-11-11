@@ -65,6 +65,18 @@ internal static class OpenGenericRegistrationRules
            && (serviceType.GetGenericTypeDefinition() == typeof(IRequestHandler<,>) ||
                serviceType.GetGenericTypeDefinition() == typeof(IValueTaskRequestHandler<,>));
 
+    /// <summary>
+    /// Normalizes a closed <see cref="IRequestHandler{TRequest, TResponse}"/> or
+    /// <see cref="IValueTaskRequestHandler{TRequest, TResponse}"/> service type to the same
+    /// (request, response) key, so a request served by both handler kinds is still a single,
+    /// detectable registration slot.
+    /// </summary>
+    internal static (Type Request, Type Response) GetRequestHandlerKey(Type closedRequestHandlerService)
+    {
+        var typeArguments = closedRequestHandlerService.GetGenericArguments();
+        return (typeArguments[0], typeArguments[1]);
+    }
+
     internal static bool IsClosedStreamRequestHandler(Type serviceType)
         => serviceType.IsGenericType
            && !serviceType.ContainsGenericParameters

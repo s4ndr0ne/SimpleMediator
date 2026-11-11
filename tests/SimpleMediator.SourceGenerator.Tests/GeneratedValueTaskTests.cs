@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Core;
 using SimpleMediator.Interfaces;
 
 namespace SimpleMediator.SourceGenerator.Tests;
@@ -42,5 +43,23 @@ public sealed class GeneratedValueTaskTests
 
         Assert.Equal(7, await sender.SendValueTask(new Box<int>(7)));
         Assert.Equal(8, await SenderExtensions.SendValueTask(sender, new Box<int>(8)));
+    }
+
+    [Fact]
+    public void ValidateOnBuild_rejects_task_and_value_task_handlers_for_the_same_request()
+    {
+        var services = new ServiceCollection();
+        services.AddTransient<IRequestHandler<Ping, int>, TaskPingHandler>();
+
+        Assert.Throws<RequestHandlerResolutionException>(() => services.AddSimpleMediatorGenerated(options =>
+        {
+            options.RegisterAssembly(typeof(Ping).Assembly, type => type == typeof(PingHandler));
+            options.ValidateOnBuild = true;
+        }));
+    }
+
+    public sealed class TaskPingHandler : IRequestHandler<Ping, int>
+    {
+        public Task<int> Handle(Ping request, CancellationToken cancellationToken) => Task.FromResult(42);
     }
 }

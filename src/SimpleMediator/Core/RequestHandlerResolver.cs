@@ -17,6 +17,11 @@ internal static class RequestHandlerResolver
         return Resolve<TRequest, TResponse>(serviceProvider, configuration, ref state);
     }
 
+    [SuppressMessage(
+        "Reliability",
+        "CA2000:Dispose objects before losing scope",
+        Justification = "The adapter owns no resources when it wraps a container-owned handler. " +
+                        "Custom-mapped adapters are owned and disposed by the lease or lifetime store.")]
     public static HandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(
         IServiceProvider serviceProvider,
         MediatorConfiguration? configuration,
@@ -211,16 +216,55 @@ internal static class RequestHandlerResolver
         }
     }
 
-    internal sealed class ValueTaskRequestHandlerAdapter<TRequest, TResponse>(
-        IValueTaskRequestHandler<TRequest, TResponse> inner) : IRequestHandler<TRequest, TResponse>
+    /// <summary>
+    /// Adapts an <see cref="IValueTaskRequestHandler{TRequest, TResponse}"/> to the
+    /// <see cref="IRequestHandler{TRequest, TResponse}"/> contract used by the dispatcher.
+    /// </summary>
+    /// <remarks>
+    /// When the adapter is built for a custom-mapped open-generic handler it owns the inner
+    /// instance, so it forwards disposal to it. Adapters that wrap a container-owned handler are
+    /// never disposed by the mediator and the container disposes the inner handler directly.
+    /// </remarks>
+    internal sealed class ValueTaskRequestHandlerAdapter<TRequest, TResponse> :
+        IRequestHandler<TRequest, TResponse>, IDisposable, IAsyncDisposable
         where TRequest : IRequest<TResponse>
     {
-        public IValueTaskRequestHandler<TRequest, TResponse> Inner => inner;
+        private readonly IValueTaskRequestHandler<TRequest, TResponse> _inner;
+
+        public ValueTaskRequestHandlerAdapter(IValueTaskRequestHandler<TRequest, TResponse> inner)
+            => _inner = inner;
 
         public Task<TResponse> Handle(TRequest request, CancellationToken cancellationToken)
         {
-            var vt = inner.Handle(request, cancellationToken);
+            var vt = _inner.Handle(request, cancellationToken);
             return vt.IsCompletedSuccessfully ? Task.FromResult(vt.Result) : vt.AsTask();
+        }
+
+        public void Dispose()
+        {
+            if (_inner is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+            else if (_inner is IAsyncDisposable asyncDisposable)
+            {
+                asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            if (_inner is IAsyncDisposable asyncDisposable)
+            {
+                return asyncDisposable.DisposeAsync();
+            }
+
+            if (_inner is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+
+            return default;
         }
     }
 }

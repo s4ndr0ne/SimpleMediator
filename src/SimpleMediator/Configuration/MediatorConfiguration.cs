@@ -187,7 +187,12 @@ internal sealed class MediatorConfiguration
         List<OpenGenericHandlerFactory>? factories = null;
         foreach (var registration in CustomOpenGenericRequestHandlers)
         {
-            if (OpenGenericMatcher.TryClose(registration.ImplementationType, requestType, responseType, out var closedImplementation))
+            if (OpenGenericMatcher.TryClose(
+                    registration.ImplementationType,
+                    typeof(IRequestHandler<,>),
+                    requestType,
+                    responseType,
+                    out var closedImplementation))
             {
                 factories ??= new List<OpenGenericHandlerFactory>(1);
                 factories.Add(new OpenGenericHandlerFactory(
@@ -197,9 +202,47 @@ internal sealed class MediatorConfiguration
                     requestType,
                     responseType));
             }
+            else if (OpenGenericMatcher.TryClose(
+                         registration.ImplementationType,
+                         typeof(IValueTaskRequestHandler<,>),
+                         requestType,
+                         responseType,
+                         out var closedValueTaskImplementation))
+            {
+                // A custom-mapped ValueTask handler is not registered in DI, so wrap it in the
+                // adapter the dispatcher expects. The adapter owns the inner handler and forwards
+                // disposal, which keeps the custom lifetime stores' disposal semantics intact.
+                factories ??= new List<OpenGenericHandlerFactory>(1);
+                factories.Add(new OpenGenericHandlerFactory(
+                    closedValueTaskImplementation!,
+                    CreateValueTaskAdapterFactory(closedValueTaskImplementation!, requestType, responseType),
+                    registration.Lifetime,
+                    requestType,
+                    responseType));
+            }
         }
 
         return factories is null ? OpenGenericResolution.Empty : new OpenGenericResolution(factories);
+    }
+
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
+    private static ObjectFactory CreateValueTaskAdapterFactory(
+        Type closedImplementation,
+        Type requestType,
+        Type responseType)
+    {
+        var innerFactory = ActivatorUtilities.CreateFactory(closedImplementation, Type.EmptyTypes);
+        var innerServiceType = typeof(IValueTaskRequestHandler<,>).MakeGenericType(requestType, responseType);
+        var adapterType = typeof(RequestHandlerResolver.ValueTaskRequestHandlerAdapter<,>)
+            .MakeGenericType(requestType, responseType);
+        var adapterFactory = ActivatorUtilities.CreateFactory(adapterType, new[] { innerServiceType });
+
+        return (provider, arguments) =>
+        {
+            var inner = innerFactory(provider, arguments);
+            return adapterFactory(provider, new[] { inner });
+        };
     }
 }
 

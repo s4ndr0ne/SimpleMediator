@@ -23,7 +23,7 @@ internal static class MediatorRegistrationValidator
             // separate registrations and cannot make that lookup ambiguous.
             .Where(descriptor => !descriptor.IsKeyedService &&
                                  OpenGenericRegistrationRules.IsClosedRequestHandler(descriptor.ServiceType))
-            .GroupBy(descriptor => typeof(IRequestHandler<,>).MakeGenericType(descriptor.ServiceType.GetGenericArguments()))
+            .GroupBy(descriptor => OpenGenericRegistrationRules.GetRequestHandlerKey(descriptor.ServiceType))
             .ToList();
 
         foreach (var group in requestHandlerGroups)
@@ -31,7 +31,8 @@ internal static class MediatorRegistrationValidator
             if (group.Count() > 1)
             {
                 throw new Core.RequestHandlerResolutionException(
-                    $"Multiple request handlers registered for '{group.Key.FullName}'. A request can only have one handler.");
+                    $"Multiple request handlers registered for '{group.Key.Request.FullName}' with response " +
+                    $"'{group.Key.Response.FullName}'. A request can only have one handler.");
             }
         }
 
@@ -247,7 +248,7 @@ internal static class MediatorRegistrationValidator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateScannedOpenGenericHandlerConflicts(
         IServiceCollection services,
-        IEnumerable<IGrouping<Type, ServiceDescriptor>> requestHandlerGroups)
+        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups)
     {
         var configuration = GetConfiguration(services);
         if (configuration is null)
@@ -257,11 +258,12 @@ internal static class MediatorRegistrationValidator
 
         foreach (var group in requestHandlerGroups)
         {
-            var typeArguments = group.Key.GetGenericArguments();
+            var typeArguments = new[] { group.Key.Request, group.Key.Response };
             foreach (var registration in configuration.CustomOpenGenericRequestHandlers)
             {
                 var openHandler = registration.ImplementationType;
-                if (OpenGenericMatcher.TryClose(openHandler, typeArguments[0], typeArguments[1], out _))
+                if (OpenGenericMatcher.TryClose(openHandler, typeof(IRequestHandler<,>), typeArguments[0], typeArguments[1], out _) ||
+                    OpenGenericMatcher.TryClose(openHandler, typeof(IValueTaskRequestHandler<,>), typeArguments[0], typeArguments[1], out _))
                 {
                     throw new Core.RequestHandlerResolutionException(
                         $"Request '{typeArguments[0].FullName}' is matched by both a closed handler and the open-generic handler " +
@@ -275,7 +277,7 @@ internal static class MediatorRegistrationValidator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateNativeOpenGenericHandlers(
         IServiceCollection services,
-        IEnumerable<IGrouping<Type, ServiceDescriptor>> requestHandlerGroups)
+        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups)
     {
         var nativeOpenGenericHandlers = services
             .Where(descriptor => !descriptor.IsKeyedService &&
@@ -286,14 +288,15 @@ internal static class MediatorRegistrationValidator
 
         foreach (var group in requestHandlerGroups)
         {
-            var typeArguments = group.Key.GetGenericArguments();
+            var requestType = group.Key.Request;
+            var responseType = group.Key.Response;
             var matchingOpenHandler = nativeOpenGenericHandlers.FirstOrDefault(descriptor =>
-                CanCloseNativeOpenGenericHandler(descriptor.ImplementationType!, descriptor.ServiceType, typeArguments[0], typeArguments[1]));
+                CanCloseNativeOpenGenericHandler(descriptor.ImplementationType!, descriptor.ServiceType, requestType, responseType));
 
             if (matchingOpenHandler is not null)
             {
                 throw new Core.RequestHandlerResolutionException(
-                    $"Request '{typeArguments[0].FullName}' is matched by both a closed handler and the native open-generic DI handler " +
+                    $"Request '{requestType.FullName}' is matched by both a closed handler and the native open-generic DI handler " +
                     $"'{matchingOpenHandler.ImplementationType!.FullName}'. A request can only have one handler.");
             }
         }
