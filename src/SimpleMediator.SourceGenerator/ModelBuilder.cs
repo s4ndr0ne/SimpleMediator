@@ -176,10 +176,6 @@ internal sealed class ModelBuilder
             return;
         }
 
-        var firstArgument = invocation.ArgumentList.Arguments.Count > 0
-            ? invocation.ArgumentList.Arguments[0].Expression
-            : null;
-
         switch (method.Name)
         {
             case "AddSimpleMediatorGenerated":
@@ -192,33 +188,41 @@ internal sealed class ModelBuilder
 
                 break;
 
-            case "RegisterAssembly" when KnownSymbols.Equal(method.ContainingType, _known.Options) && firstArgument is not null:
-                if (!TryAddRegisteredAssembly(semanticModel, firstArgument, out var registeredAssembly))
+            case "RegisterAssembly" when KnownSymbols.Equal(method.ContainingType, _known.Options):
+                var assemblyArgument = FindArgument(invocation, method, "assembly");
+                if (assemblyArgument is not null)
                 {
-                    _diagnostics.Add(Diagnostic.Create(Diagnostics.AssemblyNotResolvable, firstArgument.GetLocation()));
-                }
-                else if (registeredAssembly is not null && HasNonNullAssemblyFilter(semanticModel, invocation, method))
-                {
-                    _assembliesWithFilters.Add(registeredAssembly);
+                    if (!TryAddRegisteredAssembly(semanticModel, assemblyArgument, out var registeredAssembly))
+                    {
+                        _diagnostics.Add(Diagnostic.Create(Diagnostics.AssemblyNotResolvable, assemblyArgument.GetLocation()));
+                    }
+                    else if (registeredAssembly is not null && HasNonNullAssemblyFilter(semanticModel, invocation, method))
+                    {
+                        _assembliesWithFilters.Add(registeredAssembly);
+                    }
                 }
 
                 break;
 
             case "AddBehavior" or "AddStreamBehavior" or "AddNotificationBehavior"
-                when KnownSymbols.Equal(method.ContainingType, _known.Options) && firstArgument is not null:
-                if (firstArgument is TypeOfExpressionSyntax typeOf &&
-                    semanticModel.GetTypeInfo(typeOf.Type, _cancellationToken).Type is INamedTypeSymbol behavior)
+                when KnownSymbols.Equal(method.ContainingType, _known.Options):
+                var behaviorArgument = FindArgument(invocation, method, "behaviorType");
+                if (behaviorArgument is not null)
                 {
-                    // typeof(B<,>) binds to the unbound form; the definition carries the type parameters.
-                    var definition = behavior.IsUnboundGenericType ? behavior.OriginalDefinition : behavior;
-                    if (IsAccessible(definition, report: true, typeOf.GetLocation()))
+                    if (behaviorArgument is TypeOfExpressionSyntax typeOf &&
+                        semanticModel.GetTypeInfo(typeOf.Type, _cancellationToken).Type is INamedTypeSymbol behavior)
                     {
-                        AddBehaviorType(definition);
+                        // typeof(B<,>) binds to the unbound form; the definition carries the type parameters.
+                        var definition = behavior.IsUnboundGenericType ? behavior.OriginalDefinition : behavior;
+                        if (IsAccessible(definition, report: true, typeOf.GetLocation()))
+                        {
+                            AddBehaviorType(definition);
+                        }
                     }
-                }
-                else
-                {
-                    _diagnostics.Add(Diagnostic.Create(Diagnostics.BehaviorNotTypeOf, firstArgument.GetLocation()));
+                    else
+                    {
+                        _diagnostics.Add(Diagnostic.Create(Diagnostics.BehaviorNotTypeOf, behaviorArgument.GetLocation()));
+                    }
                 }
 
                 break;

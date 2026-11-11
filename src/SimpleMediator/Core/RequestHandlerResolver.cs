@@ -39,6 +39,10 @@ internal static class RequestHandlerResolver
             {
                 return new HandlerLease<TRequest, TResponse>(singleHandler);
             }
+
+            // A constrained open-generic registration after the closed/matching handler can cause
+            // GetService<T>() to return null while GetServices<T>() succeeds; demote to full path.
+            Volatile.Write(ref resolutionState, 2);
         }
         else if (state == 3)
         {
@@ -47,6 +51,8 @@ internal static class RequestHandlerResolver
             {
                 return new HandlerLease<TRequest, TResponse>(new ValueTaskRequestHandlerAdapter<TRequest, TResponse>(singleVtHandler));
             }
+
+            Volatile.Write(ref resolutionState, 2);
         }
 
         // Avoid materializing the DI result with ToList(). Requests normally have one

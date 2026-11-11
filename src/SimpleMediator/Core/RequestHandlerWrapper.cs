@@ -89,6 +89,11 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
                         ? result
                         : AwaitValueTaskAsync(typedRequest, result, serviceProvider, cancellationToken);
                 }
+
+                // A constrained open-generic IValueTaskRequestHandler<,> registered after the
+                // matching handler causes GetService<T>() to return null; demote so subsequent
+                // calls do not repeat the failed single-service lookup.
+                Volatile.Write(ref _handlerResolutionState, 2);
             }
             catch (OperationCanceledException)
             {
@@ -133,10 +138,10 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
     {
         try
         {
-            var handler = Volatile.Read(ref _handlerResolutionState) == 3
-                ? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration, ref _handlerResolutionState).Handler
-                : serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>()
-                  ?? RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration).Handler;
+            var handler = Volatile.Read(ref _handlerResolutionState) == 1
+                ? serviceProvider.GetService<IRequestHandler<TRequest, TResponse>>()
+                  ?? DemoteAndResolveHandler(serviceProvider)
+                : RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration, ref _handlerResolutionState).Handler;
             var task = handler.Handle(typedRequest, cancellationToken)
                        ?? throw RequestHandlerPipeline.NullTaskException(handler);
 
@@ -160,6 +165,12 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
             return RequestHandlerPipeline.HandleExceptionAsync<TRequest, TResponse>(
                 typedRequest, exception, serviceProvider, cancellationToken);
         }
+    }
+
+    private IRequestHandler<TRequest, TResponse> DemoteAndResolveHandler(IServiceProvider serviceProvider)
+    {
+        Volatile.Write(ref _handlerResolutionState, 2);
+        return RequestHandlerResolver.Resolve<TRequest, TResponse>(serviceProvider, _configuration, ref _handlerResolutionState).Handler;
     }
 
     private static async Task<TResponse> AwaitFastPathAsync(
@@ -232,6 +243,8 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
 
                     return AwaitFastPathAsync(typedRequest, singleTask, serviceProvider, cancellationToken);
                 }
+
+                Volatile.Write(ref _behaviorState, 3);
             }
 
             var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());
@@ -313,6 +326,8 @@ internal sealed class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHa
                         singleBehavior,
                         cancellationToken).ConfigureAwait(false);
                 }
+
+                Volatile.Write(ref _behaviorState, 3);
             }
 
             var behaviors = ResolveOrSkip(serviceProvider, ref _behaviorState, static sp => sp.GetServices<IPipelineBehavior<TRequest, TResponse>>());

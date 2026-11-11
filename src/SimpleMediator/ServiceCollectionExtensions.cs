@@ -180,7 +180,7 @@ public static class ServiceCollectionExtensions
             "request/response pair. Align the lifetime across modules, or register a distinct behavior type per " +
             "configuration.");
 
-    internal struct ServiceRegistrationIndex
+    internal sealed class ServiceRegistrationIndex
     {
         private readonly IServiceCollection _services;
         private readonly Dictionary<(Type ServiceType, Type ImplementationType), ServiceLifetime> _typedDescriptors;

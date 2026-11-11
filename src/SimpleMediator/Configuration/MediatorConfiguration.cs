@@ -202,12 +202,13 @@ internal sealed class MediatorConfiguration
                     requestType,
                     responseType));
             }
-            else if (OpenGenericMatcher.TryClose(
-                         registration.ImplementationType,
-                         typeof(IValueTaskRequestHandler<,>),
-                         requestType,
-                         responseType,
-                         out var closedValueTaskImplementation))
+
+            if (OpenGenericMatcher.TryClose(
+                    registration.ImplementationType,
+                    typeof(IValueTaskRequestHandler<,>),
+                    requestType,
+                    responseType,
+                    out var closedValueTaskImplementation))
             {
                 // A custom-mapped ValueTask handler is not registered in DI, so wrap it in the
                 // adapter the dispatcher expects. The adapter owns the inner handler and forwards

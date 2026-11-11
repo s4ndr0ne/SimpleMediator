@@ -20,12 +20,9 @@ internal static class MediatorAssemblyScanner
     internal static List<OpenGenericHandlerRegistration> ScanAndRegister(
         IServiceCollection services,
         SimpleMediatorOptions options,
-        ServiceCollectionExtensions.ServiceRegistrationIndex registrationIndex = default)
+        ServiceCollectionExtensions.ServiceRegistrationIndex? registrationIndex = null)
     {
-        if (registrationIndex.Equals(default(ServiceCollectionExtensions.ServiceRegistrationIndex)))
-        {
-            registrationIndex = new ServiceCollectionExtensions.ServiceRegistrationIndex(services);
-        }
+        registrationIndex ??= new ServiceCollectionExtensions.ServiceRegistrationIndex(services);
 
         // Keep only request handlers that need custom type-argument inference. Handlers whose
         // implementation parameters line up with IRequestHandler<TRequest, TResponse> are

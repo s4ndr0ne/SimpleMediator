@@ -150,23 +150,40 @@ public sealed class SimpleMediatorGenerator : IIncrementalGenerator
             ? method.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
             : string.Empty;
 
-        var firstArgument = invocation.ArgumentList.Arguments.Count > 0
-            ? invocation.ArgumentList.Arguments[0].Expression
-            : null;
-
-        var firstArgType = string.Empty;
-        if (firstArgument is TypeOfExpressionSyntax typeOf)
+        var arguments = invocation.ArgumentList.Arguments;
+        var argumentTypes = string.Empty;
+        if (arguments.Count > 0)
         {
-            firstArgType = syntaxContext.SemanticModel.GetTypeInfo(typeOf.Type, cancellationToken).Type?
-                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
-        }
-        else if (firstArgument is not null)
-        {
-            firstArgType = syntaxContext.SemanticModel.GetTypeInfo(firstArgument, cancellationToken).Type?
-                .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? string.Empty;
+            var sb = new StringBuilder(64);
+            for (var i = 0; i < arguments.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append('|');
+                }
+
+                var argument = arguments[i].Expression;
+                if (argument is TypeOfExpressionSyntax typeOf)
+                {
+                    sb.Append(syntaxContext.SemanticModel.GetTypeInfo(typeOf.Type, cancellationToken).Type?
+                        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                }
+                else
+                {
+                    sb.Append(syntaxContext.SemanticModel.GetTypeInfo(argument, cancellationToken).Type?
+                        .ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+                    var constant = syntaxContext.SemanticModel.GetConstantValue(argument, cancellationToken);
+                    if (constant.HasValue)
+                    {
+                        sb.Append('=').Append(constant.Value ?? "null");
+                    }
+                }
+            }
+
+            argumentTypes = sb.ToString();
         }
 
-        return new InvocationSignature(methodDisplay, firstArgType, invocation.ArgumentList.ToString());
+        return new InvocationSignature(methodDisplay, argumentTypes, invocation.ArgumentList.ToString());
     }
 
     private static string GetCompilationMetadataSignature(Compilation compilation)

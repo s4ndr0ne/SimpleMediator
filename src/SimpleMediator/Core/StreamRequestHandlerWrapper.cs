@@ -138,6 +138,8 @@ internal static class StreamRequestHandlerResolver
             {
                 return new StreamHandlerLease<TRequest, TResponse>(singleHandler);
             }
+
+            Volatile.Write(ref resolutionState, 2);
         }
 
         IStreamRequestHandler<TRequest, TResponse>? closedHandler = null;

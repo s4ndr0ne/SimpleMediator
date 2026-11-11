@@ -539,4 +539,53 @@ public sealed class GeneratorDriverTests
             .SourceText.ToString();
         Assert.Contains("registry.AddRequest<global::Pong, string>();", registrations3, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Incremental_pipeline_recomputes_when_second_argument_type_changes_in_static_or_reordered_call()
+    {
+        var parseOptions = new CSharpParseOptions(LanguageVersion.Latest);
+        const string InitialSource = Usings + Composition + """
+            public sealed class Box<T> : IRequest<int> { }
+            public static class Usage
+            {
+                public static ValueTask<int> Call(ISender sender, CancellationToken ct)
+                {
+                    var req = new Box<int>();
+                    _ = sender.Send(cancellationToken: ct, request: req);
+                    return SenderExtensions.SendValueTask(sender, req);
+                }
+            }
+            """;
+
+        var tree1 = CSharpSyntaxTree.ParseText(InitialSource, parseOptions);
+        var compilation1 = CSharpCompilation.Create(
+            "IncrementalInput",
+            [tree1],
+            References.Value,
+            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(
+            [new SimpleMediatorGenerator().AsSourceGenerator()],
+            parseOptions: parseOptions,
+            driverOptions: new GeneratorDriverOptions(IncrementalGeneratorOutputKind.None, trackIncrementalGeneratorSteps: true));
+
+        driver = driver.RunGenerators(compilation1);
+
+        var tree2 = CSharpSyntaxTree.ParseText(
+            InitialSource.Replace("new Box<int>()", "new Box<string>()", StringComparison.Ordinal),
+            parseOptions);
+        var compilation2 = compilation1.ReplaceSyntaxTree(tree1, tree2);
+
+        driver = driver.RunGenerators(compilation2);
+        var runResult2 = driver.GetRunResult().Results.Single();
+
+        Assert.All(
+            runResult2.TrackedSteps[SimpleMediatorGenerator.BuildModelStepName].SelectMany(step => step.Outputs),
+            output => Assert.Equal(IncrementalStepRunReason.Modified, output.Reason));
+
+        var registrations2 = runResult2.GeneratedSources
+            .First(g => g.HintName == SimpleMediatorGenerator.RegistrationsHintName)
+            .SourceText.ToString();
+        Assert.Contains("registry.AddRequest<global::Box<string>, int>();", registrations2, StringComparison.Ordinal);
+    }
 }

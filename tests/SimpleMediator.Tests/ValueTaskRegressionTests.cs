@@ -55,6 +55,23 @@ public sealed class ValueTaskRegressionTests
         public ValueTask<TResponse> Handle(TRequest request, CancellationToken cancellationToken) => new(default(TResponse)!);
     }
 
+    public sealed class ConstrainedValueHandler<TRequest, TResponse> : IValueTaskRequestHandler<TRequest, TResponse>
+        where TRequest : IRequest<TResponse>, IDisposable
+    {
+        public ValueTask<TResponse> Handle(TRequest request, CancellationToken cancellationToken) => new(default(TResponse)!);
+    }
+
+    public sealed class DualCustomOpenHandler<T> :
+        IRequestHandler<VtEchoRequest<T>, T>,
+        IValueTaskRequestHandler<VtEchoRequest<T>, T>
+    {
+        Task<T> IRequestHandler<VtEchoRequest<T>, T>.Handle(VtEchoRequest<T> request, CancellationToken cancellationToken)
+            => Task.FromResult(request.Value);
+
+        ValueTask<T> IValueTaskRequestHandler<VtEchoRequest<T>, T>.Handle(VtEchoRequest<T> request, CancellationToken cancellationToken)
+            => new(request.Value);
+    }
+
     public sealed record VtEchoRequest<T>(T Value) : IRequest<T>;
 
     public sealed class VtEchoHandler<T> : IValueTaskRequestHandler<VtEchoRequest<T>, T>, IDisposable
@@ -124,6 +141,7 @@ public sealed class ValueTaskRegressionTests
         var services = new ServiceCollection();
         services.AddTransient(typeof(IRequestHandler<,>), typeof(ConstrainedTaskHandler<,>));
         services.AddTransient<IValueTaskRequestHandler<Request, int>, ValueHandler>();
+        services.AddTransient(typeof(IValueTaskRequestHandler<,>), typeof(ConstrainedValueHandler<,>));
         services.AddSimpleMediator();
         using var provider = services.BuildServiceProvider();
         using var scope = provider.CreateScope();
@@ -132,6 +150,22 @@ public sealed class ValueTaskRegressionTests
         Assert.Equal(42, await sender.Send(new Request()));
         Assert.Equal(42, await sender.Send(new Request()));
         Assert.Equal(42, await sender.SendValueTask(new Request()));
+        Assert.Equal(42, await sender.SendValueTask(new Request()));
+    }
+
+    [Fact]
+    public async Task Custom_open_generic_implementing_both_task_and_value_task_for_same_request_throws_on_send()
+    {
+        var services = new ServiceCollection();
+        services.AddSimpleMediator(options =>
+            options.RegisterAssembly(typeof(VtEchoRequest<>).Assembly, type => type == typeof(DualCustomOpenHandler<>)));
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+
+        await Assert.ThrowsAsync<RequestHandlerResolutionException>(async () => await sender.Send(new VtEchoRequest<int>(1)));
+        await Assert.ThrowsAsync<RequestHandlerResolutionException>(async () => await sender.SendValueTask(new VtEchoRequest<int>(1)));
     }
 
     [Fact]
