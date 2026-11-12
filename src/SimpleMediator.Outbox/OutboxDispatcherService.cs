@@ -268,6 +268,7 @@ internal sealed class OutboxDispatcherService(
         catch (Exception exception)
         {
             OutboxLog.MarkProcessedFailed(_logger, exception, lease.Message.Id);
+            await ReleaseFailedLeaseAsync(store, lease, exception).ConfigureAwait(false);
         }
     }
 

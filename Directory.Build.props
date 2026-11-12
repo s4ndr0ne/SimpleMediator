@@ -23,14 +23,14 @@
     <VersionSuffix Condition="'$(VersionSuffix)' == ''">local</VersionSuffix>
     <Authors>s4ndr0ne</Authors>
     <Description>A simple mediator implementation for .NET</Description>
-    <Copyright>Copyright © s4ndr0ne</Copyright>
+    <Copyright>Copyright © 2025-2026 s4ndr0ne</Copyright>
     <PackageReleaseNotes>See CHANGELOG.md for release history.</PackageReleaseNotes>
     <RepositoryUrl>https://github.com/s4ndr0ne/SimpleMediator</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PackageTags>mediator, pattern, net8, net10</PackageTags>
-    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>

@@ -24,7 +24,7 @@ internal sealed class BehaviorOrderCache
 
     // A single reference: concurrent computations publish a whole entry atomically, so a reader
     // never observes types from one computation paired with orders from another.
-    private Entry? _entry;
+    private volatile Entry? _entry;
 
     public int[] GetOrder<TRequest, TResponse>(
         IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviors)

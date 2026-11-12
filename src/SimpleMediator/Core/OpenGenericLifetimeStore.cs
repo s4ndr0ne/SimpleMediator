@@ -12,6 +12,7 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<(Type Implementation, Type Request, Type Response), object> _instances = new();
+    private Dictionary<(Type Implementation, Type Request, Type Response), Lazy<object>>? _inFlight;
     private bool _disposed;
 
     public object GetOrAdd(
@@ -25,11 +26,11 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
             {
                 return existing;
             }
-
-            var created = factory();
-            _instances.Add(key, created);
-            return created;
         }
+
+        return GetOrAddSlow(
+            key,
+            () => new Lazy<object>(factory, LazyThreadSafetyMode.ExecutionAndPublication));
     }
 
     public object GetOrAdd(
@@ -44,10 +45,99 @@ internal abstract class OpenGenericLifetimeStore : IDisposable, IAsyncDisposable
             {
                 return existing;
             }
+        }
 
-            var created = factory(serviceProvider, arguments: null);
-            _instances.Add(key, created);
-            return created;
+        return GetOrAddSlow(
+            key,
+            () => new Lazy<object>(
+                () => factory(serviceProvider, arguments: null),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+    }
+
+    private object GetOrAddSlow(
+        (Type Implementation, Type Request, Type Response) key,
+        Func<Lazy<object>> createLazy)
+    {
+        Lazy<object>? lazy;
+        lock (_gate)
+        {
+            ThrowHelper.ThrowIfDisposed(_disposed, this);
+            if (_instances.TryGetValue(key, out var existing))
+            {
+                return existing;
+            }
+
+            _inFlight ??= new Dictionary<(Type Implementation, Type Request, Type Response), Lazy<object>>();
+            if (!_inFlight.TryGetValue(key, out lazy))
+            {
+                lazy = createLazy();
+                _inFlight.Add(key, lazy);
+            }
+        }
+
+        object created;
+        try
+        {
+            created = lazy.Value;
+        }
+        catch
+        {
+            lock (_gate)
+            {
+                if (_inFlight is not null &&
+                    _inFlight.TryGetValue(key, out var current) &&
+                    ReferenceEquals(current, lazy))
+                {
+                    _inFlight.Remove(key);
+                }
+            }
+
+            throw;
+        }
+
+        var disposeOrphan = false;
+        lock (_gate)
+        {
+            var removedInFlight = _inFlight is not null &&
+                                  _inFlight.TryGetValue(key, out var current) &&
+                                  ReferenceEquals(current, lazy) &&
+                                  _inFlight.Remove(key);
+
+            if (_disposed)
+            {
+                disposeOrphan = removedInFlight;
+            }
+            else
+            {
+                if (_instances.TryGetValue(key, out var existing))
+                {
+                    return existing;
+                }
+
+                _instances.Add(key, created);
+                return created;
+            }
+        }
+
+        if (disposeOrphan)
+        {
+            DisposeOrphanInstance(created);
+        }
+
+        ThrowHelper.ThrowIfDisposed(true, this);
+        return null!;
+    }
+
+    private static void DisposeOrphanInstance(object instance)
+    {
+        switch (instance)
+        {
+            case IAsyncDisposable asyncDisposable:
+                asyncDisposable.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                break;
+            case IDisposable disposable:
+                disposable.Dispose();
+                break;
         }
     }
 

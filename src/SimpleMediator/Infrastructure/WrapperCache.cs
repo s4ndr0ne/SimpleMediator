@@ -15,7 +15,6 @@ namespace SimpleMediator.Infrastructure;
 /// </remarks>
 internal sealed class WrapperCache<TKey> where TKey : notnull
 {
-    private readonly ConcurrentDictionary<Type, object> _byPrimaryType = new();
     private readonly ConcurrentDictionary<TKey, object> _resolved = new();
     private readonly ConcurrentDictionary<TKey, Lazy<object>> _entries = new();
 
@@ -29,13 +28,7 @@ internal sealed class WrapperCache<TKey> where TKey : notnull
         Func<TKey, object> factory)
         where TWrapper : class
     {
-        if (_byPrimaryType.TryGetValue(primaryType, out var existing) && existing is TWrapper typedExisting)
-        {
-            return typedExisting;
-        }
-
         var resolved = GetOrAdd(fullKey, factory);
-        _ = _byPrimaryType.TryAdd(primaryType, resolved);
         return (TWrapper)resolved;
     }
 

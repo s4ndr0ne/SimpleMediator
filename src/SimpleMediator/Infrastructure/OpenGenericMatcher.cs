@@ -143,7 +143,8 @@ internal static class OpenGenericMatcher
 
     internal static bool IsRequestHandlerDefinition(Type serviceDefinition)
         => serviceDefinition == typeof(IRequestHandler<,>) ||
-           serviceDefinition == typeof(IValueTaskRequestHandler<,>);
+           serviceDefinition == typeof(IValueTaskRequestHandler<,>) ||
+           serviceDefinition == typeof(IStreamRequestHandler<,>);
 
     private static bool TryCollectGenericParameters(Type pattern, ISet<Type> parameters)
     {

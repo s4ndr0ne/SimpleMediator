@@ -419,14 +419,14 @@ public class GenericHandler<TRequest, TResponse> : IRequestHandler<TRequest, TRe
 }
 ```
 
-Native-compatible handlers are registered as ordinary open-generic DI services. They follow `DefaultLifetime`, are disposed by the container, and behave exactly like closed handlers. Custom-mapped handlers such as `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>` cannot be closed by Microsoft DI, so they use SimpleMediator's type-argument matcher and are activated by SimpleMediator itself, outside the native registration path.
+Native-compatible handlers are registered as ordinary open-generic DI services. They follow `DefaultLifetime`, are disposed by the container, and behave exactly like closed handlers. Custom-mapped handlers such as `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>`, `VtEchoHandler<T> : IValueTaskRequestHandler<EchoRequest<T>, T>`, or `StreamEchoHandler<T> : IStreamRequestHandler<StreamEchoRequest<T>, T>` cannot be closed by Microsoft DI, so they use SimpleMediator's type-argument matcher and are activated by SimpleMediator itself, outside the native registration path.
 
 > **Lifetime of custom-mapped open-generic handlers.** These follow `DefaultLifetime` exactly like
 > every other handler. Concretely:
 >
 > | `DefaultLifetime` | Where the instance lives | Built from | Disposed by |
 > |---|---|---|---|
-> | `Transient` (not the default) | one per `Send` | the current scope | SimpleMediator, at the end of the request |
+> | `Transient` (not the default) | one per `Send` / `CreateStream` | the current scope | SimpleMediator, at the end of the request or stream enumeration |
 > | `Scoped` (the default) | one per DI scope | the current scope | the scope |
 > | `Singleton` | one per application | **the root provider** | the root provider |
 >
@@ -551,8 +551,8 @@ Basic structural validation runs during **every** `AddSimpleMediator` call, with
 
 `ValidateOnBuild` (or an explicit `services.ValidateSimpleMediator()`) additionally enables the *conflict* checks, which are the ones that would otherwise surface on live traffic:
 
-- multiple registrations for the same request handler slot, counting `IRequestHandler<,>` and `IValueTaskRequestHandler<,>` together (whether by type, factory, or instance);
-- a closed request handler that is *also* matched by a scanned custom-mapped open-generic handler or by a native DI open-generic `IRequestHandler<,>` / `IValueTaskRequestHandler<,>` registration.
+- multiple registrations for the same request or stream handler slot, counting `IRequestHandler<,>` and `IValueTaskRequestHandler<,>` together (whether by type, factory, or instance);
+- a closed request or stream handler that is *also* matched by a scanned custom-mapped open-generic handler or by a native DI open-generic `IRequestHandler<,>`, `IValueTaskRequestHandler<,>`, or `IStreamRequestHandler<,>` registration.
 
 Conflict validation can only see request types that have a closed registration; it cannot predict every request type an application may send. The singleton check recursively inspects registered implementation types for custom-mapped open-generic handlers, but cannot inspect factory registrations or dependencies resolved dynamically through `IServiceProvider`. Enable the host provider's `ValidateOnBuild` and `ValidateScopes` as additional safeguards for the rest of the application's service graph.
 
@@ -582,11 +582,12 @@ implementations of the same interfaces. A type implementing several of them is r
   types (such as `ValueTaskRequestHandlerAdapter<,> : IRequestHandler<,>`) as user handlers.
 - anything excluded by a type filter.
 
-**Custom-mapped open generics:** an *inferable* open-generic request handler whose mapping Microsoft
-DI cannot close (for example `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>` or
-`ValueTaskEchoHandler<T> : IValueTaskRequestHandler<EchoRequest<T>, T>`) is registered through
+**Custom-mapped open generics:** an *inferable* open-generic request or stream handler whose mapping Microsoft
+DI cannot close (for example `EchoHandler<T> : IRequestHandler<EchoRequest<T>, T>`,
+`ValueTaskEchoHandler<T> : IValueTaskRequestHandler<EchoRequest<T>, T>`, or
+`StreamEchoHandler<T> : IStreamRequestHandler<StreamEchoRequest<T>, T>`) is registered through
 SimpleMediator's matcher and activated with the configured `DefaultLifetime`. One that is not
-inferable is a configuration error. A type that mixes a natively compatible request-handler
+inferable is a configuration error. A type that mixes a natively compatible request/stream-handler
 interface with a custom-mapped one is rejected at startup, because otherwise the same request would
 be resolved both by DI and by the matcher.
 

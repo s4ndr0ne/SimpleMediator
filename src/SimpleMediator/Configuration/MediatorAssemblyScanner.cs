@@ -119,11 +119,10 @@ internal static class MediatorAssemblyScanner
             .Where(implementedInterface => implementedInterface.IsGenericType)
             .ToArray();
 
-        // Interfaces with a fixed 1:1 generic mapping are always registered natively. The two
-        // request-handler interfaces are handled below because they may need custom inference.
+        // Interfaces with a fixed 1:1 generic mapping are always registered natively. Request
+        // and stream-request handler interfaces are handled below because they may need custom inference.
         foreach (var implementedInterface in implementedInterfaces)
         {
-            RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IStreamRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(INotificationHandler<>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPreRequestHandler<,>), lifetime);
             RegisterNativeOpenGenericInterface(registrationIndex, type, implementedInterface, typeof(IPostRequestHandler<,>), lifetime);
@@ -138,14 +137,21 @@ internal static class MediatorAssemblyScanner
             .Where(implementedInterface =>
                 implementedInterface.GetGenericTypeDefinition() == typeof(IValueTaskRequestHandler<,>))
             .ToArray();
+        var streamRequestHandlerInterfaces = implementedInterfaces
+            .Where(implementedInterface =>
+                implementedInterface.GetGenericTypeDefinition() == typeof(IStreamRequestHandler<,>))
+            .ToArray();
 
-        if (requestHandlerInterfaces.Length == 0 && valueTaskRequestHandlerInterfaces.Length == 0)
+        if (requestHandlerInterfaces.Length == 0 &&
+            valueTaskRequestHandlerInterfaces.Length == 0 &&
+            streamRequestHandlerInterfaces.Length == 0)
         {
             return;
         }
 
         var hasRequestHandler = requestHandlerInterfaces.Length > 0;
         var hasValueTaskRequestHandler = valueTaskRequestHandlerInterfaces.Length > 0;
+        var hasStreamRequestHandler = streamRequestHandlerInterfaces.Length > 0;
         var requestHandlerIsNative = !hasRequestHandler || requestHandlerInterfaces.All(implementedInterface =>
             OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
                 type,
@@ -156,8 +162,13 @@ internal static class MediatorAssemblyScanner
                 type,
                 implementedInterface,
                 typeof(IValueTaskRequestHandler<,>)));
+        var streamRequestHandlerIsNative = !hasStreamRequestHandler || streamRequestHandlerInterfaces.All(implementedInterface =>
+            OpenGenericRegistrationRules.CanRegisterWithNativeResolution(
+                type,
+                implementedInterface,
+                typeof(IStreamRequestHandler<,>)));
 
-        if (requestHandlerIsNative && valueTaskRequestHandlerIsNative)
+        if (requestHandlerIsNative && valueTaskRequestHandlerIsNative && streamRequestHandlerIsNative)
         {
             if (hasRequestHandler)
             {
@@ -171,21 +182,30 @@ internal static class MediatorAssemblyScanner
                     new ServiceDescriptor(typeof(IValueTaskRequestHandler<,>), type, lifetime));
             }
 
+            if (hasStreamRequestHandler)
+            {
+                registrationIndex.TryAddEnumerable(
+                    new ServiceDescriptor(typeof(IStreamRequestHandler<,>), type, lifetime));
+            }
+
             return;
         }
 
         // A type can be custom-mapped for one handler kind and native for the other. Native DI
         // would resolve the native half while the custom matcher resolves the other, so the
         // request would be reported as ambiguous at dispatch time. Reject the shape at startup.
-        var requestHandlerIsCustom = hasRequestHandler && !requestHandlerIsNative;
-        var valueTaskRequestHandlerIsCustom = hasValueTaskRequestHandler && !valueTaskRequestHandlerIsNative;
-        if (hasRequestHandler && hasValueTaskRequestHandler &&
-            requestHandlerIsCustom != valueTaskRequestHandlerIsCustom)
+        var anyNative = (hasRequestHandler && requestHandlerIsNative) ||
+                        (hasValueTaskRequestHandler && valueTaskRequestHandlerIsNative) ||
+                        (hasStreamRequestHandler && streamRequestHandlerIsNative);
+        var anyCustom = (hasRequestHandler && !requestHandlerIsNative) ||
+                        (hasValueTaskRequestHandler && !valueTaskRequestHandlerIsNative) ||
+                        (hasStreamRequestHandler && !streamRequestHandlerIsNative);
+        if (anyNative && anyCustom)
         {
             throw new InvalidOperationException(
                 $"Open-generic request handler '{type.FullName}' mixes a native-compatible request-handler interface with one " +
                 "that needs custom type-argument inference. A request handler must be natively compatible with every " +
-                "IRequestHandler<TRequest, TResponse> and IValueTaskRequestHandler<TRequest, TResponse> interface it implements, " +
+                "IRequestHandler<TRequest, TResponse>, IValueTaskRequestHandler<TRequest, TResponse>, and IStreamRequestHandler<TRequest, TResponse> interface it implements, " +
                 "or it must be registered as closed types.");
         }
 

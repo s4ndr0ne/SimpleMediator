@@ -43,6 +43,7 @@ internal sealed class MediatorConfiguration
     // Caches the *resolution plan* (matched closed types + compiled factories) per
     // request/response pair — never the handler instance, so scoped dependencies stay correct.
     private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _resolutionCache;
+    private readonly BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution> _streamResolutionCache;
     internal readonly WrapperCache<(Type Request, Type Response)> RequestHandlerWrappers = new();
     internal readonly WrapperCache<(Type Request, Type Response)> StreamRequestHandlerWrappers = new();
     internal readonly WrapperCache<Type> NotificationHandlerWrappers = new();
@@ -96,6 +97,7 @@ internal sealed class MediatorConfiguration
         RequireScopedMediatorIsExplicit = requireScopedMediatorIsExplicit;
         CustomOpenGenericRequestHandlers = customOpenGenericRequestHandlers ?? NoRegistrations;
         _resolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
+        _streamResolutionCache = new BoundedFactoryCache<(Type Request, Type Response), OpenGenericResolution>(resolutionCacheCapacity);
         GeneratedRequestWrappers = generatedRequestWrappers;
         GeneratedStreamRequestWrappers = generatedStreamRequestWrappers;
         GeneratedNotificationWrappers = generatedNotificationWrappers;
@@ -217,6 +219,47 @@ internal sealed class MediatorConfiguration
                 factories.Add(new OpenGenericHandlerFactory(
                     closedValueTaskImplementation!,
                     CreateValueTaskAdapterFactory(closedValueTaskImplementation!, requestType, responseType),
+                    registration.Lifetime,
+                    requestType,
+                    responseType));
+            }
+        }
+
+        return factories is null ? OpenGenericResolution.Empty : new OpenGenericResolution(factories);
+    }
+
+    /// <summary>
+    /// Returns the cached set of open-generic stream request handlers that match the given
+    /// request/response pair, as pre-compiled object factories. Empty when none match.
+    /// </summary>
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
+    public OpenGenericResolution ResolveStreamOpenGeneric(Type requestType, Type responseType)
+        => _streamResolutionCache.GetOrAdd((requestType, responseType), key => BuildStreamResolution(key.Request, key.Response));
+
+    [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
+    [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
+    private OpenGenericResolution BuildStreamResolution(Type requestType, Type responseType)
+    {
+        if (CustomOpenGenericRequestHandlers.Count == 0)
+        {
+            return OpenGenericResolution.Empty;
+        }
+
+        List<OpenGenericHandlerFactory>? factories = null;
+        foreach (var registration in CustomOpenGenericRequestHandlers)
+        {
+            if (OpenGenericMatcher.TryClose(
+                    registration.ImplementationType,
+                    typeof(IStreamRequestHandler<,>),
+                    requestType,
+                    responseType,
+                    out var closedImplementation))
+            {
+                factories ??= new List<OpenGenericHandlerFactory>(1);
+                factories.Add(new OpenGenericHandlerFactory(
+                    closedImplementation!,
+                    ActivatorUtilities.CreateFactory(closedImplementation!, Type.EmptyTypes),
                     registration.Lifetime,
                     requestType,
                     responseType));

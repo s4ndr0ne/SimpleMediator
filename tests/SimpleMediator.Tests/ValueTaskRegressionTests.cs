@@ -74,6 +74,37 @@ public sealed class ValueTaskRegressionTests
 
     public sealed record VtEchoRequest<T>(T Value) : IRequest<T>;
 
+    public sealed record StreamEchoRequest<T>(T Value) : IStreamRequest<T>;
+
+    public sealed class StreamEchoHandler<T> : IStreamRequestHandler<StreamEchoRequest<T>, T>, IDisposable
+    {
+        private readonly UnitTest1.CallProbe _probe;
+
+        public StreamEchoHandler(UnitTest1.CallProbe probe) => _probe = probe;
+
+        public async IAsyncEnumerable<T> Handle(
+            StreamEchoRequest<T> request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            cancellationToken.ThrowIfCancellationRequested();
+            yield return request.Value;
+        }
+
+        public void Dispose() => _probe.Record("stream-open-disposed");
+    }
+
+    public sealed class ClosedIntStreamEchoHandler : IStreamRequestHandler<StreamEchoRequest<int>, int>
+    {
+        public async IAsyncEnumerable<int> Handle(
+            StreamEchoRequest<int> request,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await Task.Yield();
+            yield return request.Value;
+        }
+    }
+
     public sealed class VtEchoHandler<T> : IValueTaskRequestHandler<VtEchoRequest<T>, T>, IDisposable
     {
         private readonly UnitTest1.CallProbe _probe;
@@ -249,5 +280,99 @@ public sealed class ValueTaskRegressionTests
         await sender.SendValueTask(new Request());
         await sender.SendValueTask(new Request());
         Assert.Equal(2, started);
+    }
+
+    [Fact]
+    public async Task Assembly_scan_uses_custom_inference_for_stream_open_generic_handler_and_validates_conflicts()
+    {
+        var probe = new UnitTest1.CallProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(probe);
+        services.AddSimpleMediator(options =>
+        {
+            options.DefaultLifetime = ServiceLifetime.Transient;
+            options.RegisterAssembly(typeof(StreamEchoRequest<>).Assembly, type => type == typeof(StreamEchoHandler<>));
+        });
+
+        var configuration = Assert.IsType<MediatorConfiguration>(services
+            .Single(service => service.ServiceType == typeof(MediatorConfiguration))
+            .ImplementationInstance);
+        Assert.Contains(configuration.CustomOpenGenericRequestHandlers,
+            registration => registration.ImplementationType == typeof(StreamEchoHandler<>));
+        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IStreamRequestHandler<,>));
+
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+
+        var items = new List<int>();
+        await foreach (var item in sender.CreateStream(new StreamEchoRequest<int>(11)))
+        {
+            items.Add(item);
+        }
+
+        Assert.Equal([11], items);
+        Assert.Contains("stream-open-disposed", probe.Events);
+
+        services.AddTransient<IStreamRequestHandler<StreamEchoRequest<int>, int>, ClosedIntStreamEchoHandler>();
+        Assert.Throws<RequestHandlerResolutionException>(() => services.ValidateSimpleMediator());
+    }
+
+    [Fact]
+    public async Task OpenGenericLifetimeStore_is_single_flight_per_key_and_disposes_orphan_on_concurrent_dispose()
+    {
+        using var store = new OpenGenericScopedLifetimeStore();
+        var key = (typeof(VtEchoHandler<int>), typeof(VtEchoRequest<int>), typeof(int));
+        using var entered = new ManualResetEventSlim(false);
+        using var release = new ManualResetEventSlim(false);
+        var factoryCalls = 0;
+
+        var task1 = Task.Run(() => store.GetOrAdd(key, () =>
+        {
+            Interlocked.Increment(ref factoryCalls);
+            entered.Set();
+            release.Wait(TimeSpan.FromSeconds(5));
+            return new DisposableProbe();
+        }));
+
+        Assert.True(entered.Wait(TimeSpan.FromSeconds(5)));
+
+        var task2 = Task.Run(() => store.GetOrAdd(key, () =>
+        {
+            Interlocked.Increment(ref factoryCalls);
+            return new DisposableProbe();
+        }));
+
+        release.Set();
+        var results = await Task.WhenAll(task1, task2);
+        Assert.Same(results[0], results[1]);
+        Assert.Equal(1, Volatile.Read(ref factoryCalls));
+
+        var orphanStore = new OpenGenericScopedLifetimeStore();
+        using var orphanEntered = new ManualResetEventSlim(false);
+        using var orphanRelease = new ManualResetEventSlim(false);
+        DisposableProbe? orphan = null;
+
+        var createTask = Task.Run(() => orphanStore.GetOrAdd(key, () =>
+        {
+            orphan = new DisposableProbe();
+            orphanEntered.Set();
+            orphanRelease.Wait(TimeSpan.FromSeconds(5));
+            return orphan;
+        }));
+
+        Assert.True(orphanEntered.Wait(TimeSpan.FromSeconds(5)));
+        orphanStore.Dispose();
+        orphanRelease.Set();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => createTask);
+        Assert.NotNull(orphan);
+        Assert.Equal(1, orphan!.DisposeCount);
+    }
+
+    private sealed class DisposableProbe : IDisposable
+    {
+        public int DisposeCount;
+        public void Dispose() => Interlocked.Increment(ref DisposeCount);
     }
 }

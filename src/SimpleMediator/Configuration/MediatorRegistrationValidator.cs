@@ -52,8 +52,8 @@ internal static class MediatorRegistrationValidator
         }
 
         ValidateRegistrationShape(services);
-        ValidateScannedOpenGenericHandlerConflicts(services, requestHandlerGroups);
-        ValidateNativeOpenGenericHandlers(services, requestHandlerGroups);
+        ValidateScannedOpenGenericHandlerConflicts(services, requestHandlerGroups, streamRequestHandlerGroups);
+        ValidateNativeOpenGenericHandlers(services, requestHandlerGroups, streamRequestHandlerGroups);
     }
 
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
@@ -248,7 +248,8 @@ internal static class MediatorRegistrationValidator
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateScannedOpenGenericHandlerConflicts(
         IServiceCollection services,
-        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups)
+        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups,
+        IEnumerable<IGrouping<Type, ServiceDescriptor>> streamRequestHandlerGroups)
     {
         var configuration = GetConfiguration(services);
         if (configuration is null)
@@ -271,13 +272,29 @@ internal static class MediatorRegistrationValidator
                 }
             }
         }
+
+        foreach (var group in streamRequestHandlerGroups)
+        {
+            var typeArguments = group.Key.GetGenericArguments();
+            foreach (var registration in configuration.CustomOpenGenericRequestHandlers)
+            {
+                var openHandler = registration.ImplementationType;
+                if (OpenGenericMatcher.TryClose(openHandler, typeof(IStreamRequestHandler<,>), typeArguments[0], typeArguments[1], out _))
+                {
+                    throw new Core.RequestHandlerResolutionException(
+                        $"Stream request '{typeArguments[0].FullName}' is matched by both a closed handler and the open-generic handler " +
+                        $"'{openHandler.FullName}'. A stream request can only have one handler.");
+                }
+            }
+        }
     }
 
     [RequiresUnreferencedCode(ServiceCollectionExtensions.ReflectionMessage)]
     [RequiresDynamicCode(ServiceCollectionExtensions.DynamicCodeMessage)]
     private static void ValidateNativeOpenGenericHandlers(
         IServiceCollection services,
-        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups)
+        IEnumerable<IGrouping<(Type Request, Type Response), ServiceDescriptor>> requestHandlerGroups,
+        IEnumerable<IGrouping<Type, ServiceDescriptor>> streamRequestHandlerGroups)
     {
         var nativeOpenGenericHandlers = services
             .Where(descriptor => !descriptor.IsKeyedService &&
@@ -298,6 +315,28 @@ internal static class MediatorRegistrationValidator
                 throw new Core.RequestHandlerResolutionException(
                     $"Request '{requestType.FullName}' is matched by both a closed handler and the native open-generic DI handler " +
                     $"'{matchingOpenHandler.ImplementationType!.FullName}'. A request can only have one handler.");
+            }
+        }
+
+        var nativeOpenGenericStreamHandlers = services
+            .Where(descriptor => !descriptor.IsKeyedService &&
+                                 descriptor.ServiceType == typeof(IStreamRequestHandler<,>) &&
+                                 descriptor.ImplementationType is { IsGenericTypeDefinition: true })
+            .ToArray();
+
+        foreach (var group in streamRequestHandlerGroups)
+        {
+            var typeArguments = group.Key.GetGenericArguments();
+            var requestType = typeArguments[0];
+            var responseType = typeArguments[1];
+            var matchingOpenHandler = nativeOpenGenericStreamHandlers.FirstOrDefault(descriptor =>
+                CanCloseNativeOpenGenericHandler(descriptor.ImplementationType!, descriptor.ServiceType, requestType, responseType));
+
+            if (matchingOpenHandler is not null)
+            {
+                throw new Core.RequestHandlerResolutionException(
+                    $"Stream request '{requestType.FullName}' is matched by both a closed handler and the native open-generic DI handler " +
+                    $"'{matchingOpenHandler.ImplementationType!.FullName}'. A stream request can only have one handler.");
             }
         }
     }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using SimpleMediator.Configuration;
@@ -125,6 +126,8 @@ internal static class StreamRequestHandlerResolver
         return Resolve<TRequest, TResponse>(serviceProvider, configuration, ref state);
     }
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = ReflectionWrapperFactory.Justification)]
+    [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = ReflectionWrapperFactory.Justification)]
     public static StreamHandlerLease<TRequest, TResponse> Resolve<TRequest, TResponse>(
         IServiceProvider serviceProvider,
         MediatorConfiguration? configuration,
@@ -165,13 +168,20 @@ internal static class StreamRequestHandlerResolver
             }
         }
 
-        if (closedHandlerCount == 0)
+        configuration ??= serviceProvider.GetService<MediatorConfiguration>();
+        var openMatches = configuration is { CustomOpenGenericRequestHandlers.Count: > 0 }
+            ? configuration.ResolveStreamOpenGeneric(typeof(TRequest), typeof(TResponse)).Factories
+            : Array.Empty<OpenGenericHandlerFactory>();
+
+        var total = closedHandlerCount + openMatches.Count;
+
+        if (total == 0)
         {
             throw new RequestHandlerResolutionException(
                 $"No stream request handler registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'.");
         }
 
-        if (closedHandlerCount > 1)
+        if (total > 1)
         {
             throw new RequestHandlerResolutionException(
                 $"Multiple stream request handlers registered for '{typeof(TRequest).FullName}' with response '{typeof(TResponse).FullName}'. " +
@@ -180,10 +190,50 @@ internal static class StreamRequestHandlerResolver
 
         if (Volatile.Read(ref resolutionState) == 0)
         {
-            Volatile.Write(ref resolutionState, 1);
+            Volatile.Write(ref resolutionState, closedHandlerCount == 1 ? 1 : 2);
         }
 
-        return new StreamHandlerLease<TRequest, TResponse>(closedHandler!);
+        if (closedHandlerCount == 1)
+        {
+            return new StreamHandlerLease<TRequest, TResponse>(closedHandler!);
+        }
+
+        // Exactly one custom-mapped open-generic match: resolve it through the lifetime store
+        // that matches the configured lifetime.
+        var match = openMatches[0];
+        object openGenericHandler;
+        object? ownedInstance = null;
+        switch (match.Lifetime)
+        {
+            case ServiceLifetime.Singleton:
+            {
+                var store = serviceProvider.GetRequiredService<OpenGenericSingletonLifetimeStore>();
+                openGenericHandler = store.GetOrAdd(
+                    (match.ImplementationType, match.RequestType, match.ResponseType),
+                    match.Factory,
+                    store.RootProvider);
+                break;
+            }
+
+            case ServiceLifetime.Scoped:
+            {
+                var store = serviceProvider.GetRequiredService<OpenGenericScopedLifetimeStore>();
+                openGenericHandler = store.GetOrAdd(
+                    (match.ImplementationType, match.RequestType, match.ResponseType),
+                    match.Factory,
+                    serviceProvider);
+                break;
+            }
+
+            default:
+                openGenericHandler = match.Factory(serviceProvider, arguments: null);
+                ownedInstance = openGenericHandler;
+                break;
+        }
+
+        return new StreamHandlerLease<TRequest, TResponse>(
+            (IStreamRequestHandler<TRequest, TResponse>)openGenericHandler,
+            ownedInstance);
     }
 
     internal readonly struct StreamHandlerLease<TRequest, TResponse>

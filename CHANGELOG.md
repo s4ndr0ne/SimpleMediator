@@ -6,18 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-11-12
+
 ### Added
 - **`IValueTaskRequestHandler<TRequest, TResponse>` & `SendValueTask`:** added `IValueTaskRequestHandler<in TRequest, TResponse>` in `SimpleMediator.Interfaces` and `SendValueTask<TResponse>` (both on `Mediator` and as an extension method on `ISender`), avoiding the `Task<TResponse>` heap allocation when a handler completes synchronously and no telemetry listener, pipeline behavior, or pre-/post-handler is in the way.
 - Automatic adapter support for `IValueTaskRequestHandler` in standard `ISender.Send` dispatch and DI assembly scanning, including custom-mapped open generics such as `VtHandler<T> : IValueTaskRequestHandler<EchoRequest<T>, T>`. Custom-mapped ValueTask handlers follow the configured lifetime and are disposed through the existing lifetime stores.
+- **Custom-mapped open-generic `IStreamRequestHandler<TRequest, TResponse>` support:** assembly scanning, `MediatorConfiguration.ResolveStreamOpenGeneric`, `StreamRequestHandlerResolver`, and startup conflict validation now support non-1:1 open-generic stream request handlers (e.g., `StreamEchoHandler<T> : IStreamRequestHandler<StreamEchoRequest<T>, T>`), honoring `Singleton`, `Scoped`, and `Transient` lifetimes (with automatic `IDisposable` / `IAsyncDisposable` cleanup at stream completion for `Transient` handlers).
 
 ### Fixed
-- The source generator locates the request/notification argument by parameter name, so `Send`, `SendValueTask`, `CreateStream`, and `Publish` calls that use named or reordered arguments are still discovered.
-- Duplicate-handler validation in generated mode now normalizes `IRequestHandler<,>` and `IValueTaskRequestHandler<,>` for the same request into one handler slot, matching runtime dispatch.
-- Assembly scanning no longer rejects custom-mapped `IValueTaskRequestHandler<,>` open generics, and explicitly rejects a handler that mixes native-compatible and custom-mapped request-handler interfaces.
+- The source generator locates `RegisterAssembly`, `Add*Behavior`, and `Send`/`SendValueTask`/`CreateStream`/`Publish` arguments by parameter name and fingerprints all invocation arguments in its incremental pipeline, so static extension calls and named/reordered arguments are always discovered and recomputed on edits.
+- Duplicate-handler validation in generated and reflection modes normalizes `IRequestHandler<,>` and `IValueTaskRequestHandler<,>` for the same request into one handler slot, including when a single custom-mapped open-generic class implements both interfaces for the same request.
+- Assembly scanning no longer rejects custom-mapped `IValueTaskRequestHandler<,>` or `IStreamRequestHandler<,>` open generics, and explicitly rejects a handler that mixes native-compatible and custom-mapped request/stream-handler interfaces.
+- Single-service fast-path probes in `RequestHandlerResolver`, `RequestHandlerWrapperImpl`, and `StreamRequestHandlerResolver` now demote to enumerable resolution when a trailing constrained open-generic registration causes `GetService<T>()` to return `null`.
+- `OpenGenericLifetimeStore.GetOrAdd` now evaluates handler factories outside its internal lock using per-key single-flight `Lazy<object>` initialization and disposes any newly created instance if the store is disposed concurrently, preventing lock-order deadlocks with Microsoft DI and avoiding duplicate handler instantiation or resource leaks.
+- `BehaviorOrderCache` now publishes its cached snapshot through a `volatile` reference for acquire/release memory safety on weak memory models (ARM64).
+- `OutboxDispatcherService` now releases the lease via `IOutboxStore.MarkFailedAsync` when `MarkProcessedAsync` throws after notification publication, preventing messages from remaining locked until `LeaseDuration` expires without recording the error.
 
 ### Changed
 - **Performance (Single-behavior fast path & zero array allocation):** when a request pipeline has exactly one registered `IPipelineBehavior`, `RequestHandlerWrapperImpl` resolves it directly via `GetService<T>()` rather than `GetServices<T>()`, eliminating Microsoft DI's per-request `T[1]` array allocation and avoiding permutation order cache lookups.
 - **Performance (Dedicated single-behavior pipeline execution):** `RequestHandlerPipeline.ExecuteWithSingleBehavior` bypasses step loops and multiple delegate allocations when executing a single behavior without pre/post-handlers.
+- **Performance (Simplified `WrapperCache` lookup & reference-type `ServiceRegistrationIndex`):** removed the duplicate `_byPrimaryType` dictionary from `WrapperCache<TKey>` in favor of direct `_resolved` lookup, and converted `ServiceRegistrationIndex` from a mutable `struct` to a `sealed class` to eliminate `ValueType.Equals` boxing.
+- **Packaging:** switched NuGet license metadata from `<PackageLicenseFile>LICENSE</PackageLicenseFile>` to `<PackageLicenseExpression>MIT</PackageLicenseExpression>` (while still packing `LICENSE`) for automated enterprise SCA compatibility.
 
 ## [4.2.1] - 2026-11-03
 

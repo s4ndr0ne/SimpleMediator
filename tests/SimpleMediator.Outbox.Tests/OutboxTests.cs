@@ -236,7 +236,7 @@ public sealed class OutboxTests
     }
 
     [Fact]
-    public async Task Worker_does_not_mark_message_failed_when_mark_processed_fails()
+    public async Task Worker_marks_message_failed_when_mark_processed_fails()
     {
         var message = new OutboxMessage(Guid.NewGuid(), nameof(SampleNotification), "hello", DateTimeOffset.UtcNow);
         var store = new TestOutboxStore(message, failMarkProcessed: true);
@@ -255,7 +255,8 @@ public sealed class OutboxTests
         {
             await publisher.Published.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await store.MarkProcessedAttempted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.False(store.Failed.Task.IsCompleted);
+            var failed = await store.Failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(message.Id, failed.MessageId);
             Assert.False(Assert.IsAssignableFrom<BackgroundService>(worker).ExecuteTask!.IsCompleted);
         }
         finally
