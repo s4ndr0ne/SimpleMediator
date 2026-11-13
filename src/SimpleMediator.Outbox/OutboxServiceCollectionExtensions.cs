@@ -54,4 +54,23 @@ public static class OutboxServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IHostedService, OutboxDispatcherService>());
         return services;
     }
+
+    /// <summary>
+    /// Registers an AOT-safe <see cref="JsonOutboxSerializer"/> as the <see cref="IOutboxSerializer"/> singleton.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="configure">Delegate used to register notification types and their <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo{T}"/> metadata.</param>
+    /// <returns>The same service collection.</returns>
+    public static IServiceCollection AddJsonOutboxSerializer(
+        this IServiceCollection services,
+        Action<JsonOutboxSerializerBuilder> configure)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configure);
+
+        var builder = new JsonOutboxSerializerBuilder();
+        configure(builder);
+        services.TryAddSingleton<IOutboxSerializer>(builder.Build());
+        return services;
+    }
 }

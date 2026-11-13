@@ -1,0 +1,30 @@
+#nullable enable
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession.Clear() -> void
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession.Connection.get -> Microsoft.Data.SqlClient.SqlConnection?
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession.Transaction.get -> Microsoft.Data.SqlClient.SqlTransaction?
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession.UseTransaction(Microsoft.Data.SqlClient.SqlConnection! connection, Microsoft.Data.SqlClient.SqlTransaction? transaction = null) -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.CommandTimeout.get -> System.TimeSpan
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.CommandTimeout.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.ConnectionString.get -> string!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.ConnectionString.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.EnsureSchemaOnStartup.get -> bool
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.EnsureSchemaOnStartup.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.MaxAttempts.get -> int
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.MaxAttempts.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.SchemaName.get -> string!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.SchemaName.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.SqlServerOutboxOptions() -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.TableName.get -> string!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.TableName.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxServiceCollectionExtensions
+static SimpleMediator.Outbox.SqlServer.SqlServerOutboxServiceCollectionExtensions.AddSqlServerOutboxStore(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.ClaimBatchAsync(int batchSize, System.DateTimeOffset nowUtc, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<System.Collections.Generic.IReadOnlyList<SimpleMediator.Outbox.OutboxLease!>!>!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.EnqueueAsync(SimpleMediator.Outbox.OutboxMessage! message, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.EnsureSchemaAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.MarkFailedAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset retryAtUtc, string! error, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.MarkProcessedAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset processedAtUtc, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.RenewLeaseAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset nowUtc, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.SqlServerOutboxStore(Microsoft.Extensions.Options.IOptions<SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions!>! options, SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession? session = null, System.TimeProvider? timeProvider = null) -> void

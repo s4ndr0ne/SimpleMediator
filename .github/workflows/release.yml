@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: |
           expected="${{ steps.version.outputs.package_version }}"
-          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator s4ndr0ne.SimpleMediator.Outbox; do
+          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator s4ndr0ne.SimpleMediator.Outbox s4ndr0ne.SimpleMediator.Outbox.SqlServer; do
             file="./artifacts/$package.$expected.nupkg"
             if [[ ! -f "$file" ]]; then
               echo "Missing package $file."
@@ -70,7 +70,7 @@ jobs:
               exit 1
             fi
           done
-          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator s4ndr0ne.SimpleMediator.Outbox; do
+          for package in s4ndr0ne.SimpleMediator s4ndr0ne.SimpleMediator.SourceGenerator s4ndr0ne.SimpleMediator.Outbox s4ndr0ne.SimpleMediator.Outbox.SqlServer; do
             file="./artifacts/$package.$expected.snupkg"
             if [[ ! -f "$file" ]]; then
               echo "Missing symbols package $file."

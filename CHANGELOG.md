@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **AOT-safe `System.Text.Json` outbox serializer (`SimpleMediator.Outbox`):** added `JsonOutboxSerializer`, `JsonOutboxSerializerBuilder`, and `AddJsonOutboxSerializer(...)` using explicit stable type keys and `JsonTypeInfo<TNotification>` metadata without runtime reflection.
+- **SQL Server outbox store package (`s4ndr0ne.SimpleMediator.Outbox.SqlServer`):** added `SqlServerOutboxStore`, `SqlServerOutboxOptions`, `ISqlServerOutboxSession` (ambient `SqlConnection`/`SqlTransaction` binding for `EnqueueAsync`), `AddSqlServerOutboxStore(...)`, atomic `UPDLOCK, READPAST, ROWLOCK` batch claiming with `NEWID()` lease tokens, configurable `MaxAttempts` dead-lettering (`DeadLetteredAtUtc`), and opt-in `EnsureSchemaAsync` / `EnsureSchemaOnStartup`.
+- **SQL Server outbox sample (`samples/SimpleMediator.OutboxSqlServerSample`):** added an end-to-end sample demonstrating `AddJsonOutboxSerializer`, `AddSqlServerOutboxStore`, and `ISqlServerOutboxSession.UseTransaction(...)`.
+
 ## [4.3.0] - 2026-11-12
 
 ### Added

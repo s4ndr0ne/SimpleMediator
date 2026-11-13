@@ -19,12 +19,17 @@ fi
 runtime_packages=("$package_directory"/s4ndr0ne.SimpleMediator.[0-9]*.nupkg)
 generator_packages=("$package_directory"/s4ndr0ne.SimpleMediator.SourceGenerator.[0-9]*.nupkg)
 outbox_packages=("$package_directory"/s4ndr0ne.SimpleMediator.Outbox.[0-9]*.nupkg)
+sqlserver_outbox_packages=("$package_directory"/s4ndr0ne.SimpleMediator.Outbox.SqlServer.[0-9]*.nupkg)
 if [[ "${#runtime_packages[@]}" -eq 0 ]]; then
   echo "No s4ndr0ne.SimpleMediator package found in '$package_directory'." >&2
   exit 1
 fi
 if [[ "${#outbox_packages[@]}" -eq 0 ]]; then
   echo "No s4ndr0ne.SimpleMediator.Outbox package found in '$package_directory'." >&2
+  exit 1
+fi
+if [[ "${#sqlserver_outbox_packages[@]}" -eq 0 ]]; then
+  echo "No s4ndr0ne.SimpleMediator.Outbox.SqlServer package found in '$package_directory'." >&2
   exit 1
 fi
 
@@ -39,8 +44,9 @@ fi
 
 consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-consumer.XXXXXX")"
 outbox_consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-outbox-consumer.XXXXXX")"
+sqlserver_consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-sqlserver-consumer.XXXXXX")"
 generated_consumer_directory="$(mktemp -d "${TMPDIR:-/tmp}/simplemediator-generated-consumer.XXXXXX")"
-trap 'rm -rf "$consumer_directory" "$outbox_consumer_directory" "$generated_consumer_directory"' EXIT
+trap 'rm -rf "$consumer_directory" "$outbox_consumer_directory" "$sqlserver_consumer_directory" "$generated_consumer_directory"' EXIT
 export NUGET_PACKAGES="$outbox_consumer_directory/.nuget"
 
 echo "Verifying s4ndr0ne.SimpleMediator $package_version (reflection registration)..."
@@ -190,6 +196,51 @@ EOF
 
 dotnet restore "$outbox_project_file" --source "$package_directory" --source https://api.nuget.org/v3/index.json >/dev/null
 dotnet run --project "$outbox_project_file" --no-restore --framework net10.0
+
+echo "Verifying s4ndr0ne.SimpleMediator.Outbox.SqlServer $package_version (DI & JsonOutboxSerializer)..."
+sqlserver_project_file="$sqlserver_consumer_directory/SqlServerOutboxConsumer.csproj"
+dotnet new console --name SqlServerOutboxConsumer --framework net10.0 --output "$sqlserver_consumer_directory" --no-restore >/dev/null
+dotnet add "$sqlserver_project_file" package Microsoft.Extensions.DependencyInjection --version 8.0.1 --no-restore >/dev/null
+dotnet add "$sqlserver_project_file" package s4ndr0ne.SimpleMediator.Outbox.SqlServer --version "$package_version" --source "$package_directory" --no-restore >/dev/null
+
+cat > "$sqlserver_consumer_directory/Program.cs" <<'EOF'
+using System.Text.Json.Serialization;
+using Microsoft.Extensions.DependencyInjection;
+using SimpleMediator.Interfaces;
+using SimpleMediator.Outbox;
+using SimpleMediator.Outbox.SqlServer;
+
+var services = new ServiceCollection();
+services.AddJsonOutboxSerializer(b => b.AddNotification("smoke.v1", SmokeJsonContext.Default.SqlSmokeNotification));
+services.AddSqlServerOutboxStore(o => o.ConnectionString = "Server=localhost;Database=OutboxSmoke;TrustServerCertificate=True;");
+services.AddSimpleMediatorOutbox();
+
+using var provider = services.BuildServiceProvider();
+await using var scope = provider.CreateAsyncScope();
+var store = scope.ServiceProvider.GetRequiredService<IOutboxStore>();
+var session = scope.ServiceProvider.GetRequiredService<ISqlServerOutboxSession>();
+var serializer = scope.ServiceProvider.GetRequiredService<IOutboxSerializer>();
+if (store is not SqlServerOutboxStore || session is null || serializer is not JsonOutboxSerializer)
+{
+    throw new InvalidOperationException("Unexpected SQL Server outbox DI resolution.");
+}
+
+var msg = serializer.Serialize(new SqlSmokeNotification("ok"), Guid.NewGuid(), DateTimeOffset.UtcNow);
+if (msg.Type != "smoke.v1")
+{
+    throw new InvalidOperationException("Unexpected serialized message type.");
+}
+
+Console.WriteLine("sqlserver outbox verified");
+
+public sealed record SqlSmokeNotification(string Value) : INotification;
+
+[JsonSerializable(typeof(SqlSmokeNotification))]
+internal sealed partial class SmokeJsonContext : JsonSerializerContext;
+EOF
+
+dotnet restore "$sqlserver_project_file" --source "$package_directory" --source https://api.nuget.org/v3/index.json >/dev/null
+dotnet run --project "$sqlserver_project_file" --no-restore --framework net10.0
 
 if [[ "${#generator_packages[@]}" -eq 0 ]]; then
   echo "No s4ndr0ne.SimpleMediator.SourceGenerator package found; skipping the generated-registration consumer."

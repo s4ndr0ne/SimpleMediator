@@ -41,6 +41,11 @@ The optional provider-agnostic outbox contracts and hosted dispatcher are a sepa
 dotnet add package s4ndr0ne.SimpleMediator.Outbox
 ```
 
+If you use SQL Server with `Microsoft.Data.SqlClient`, add the SQL Server outbox store package as well:
+```bash
+dotnet add package s4ndr0ne.SimpleMediator.Outbox.SqlServer
+```
+
 ## Supported DI container
 
 SimpleMediator supports **only Microsoft.Extensions.DependencyInjection** (the default container of
@@ -364,16 +369,24 @@ lifetimes** is reported as a configuration error rather than silently resolved. 
 keeps the first registration and discards the second, which would otherwise make the effective
 lifetime depend on module registration order.
 
-### Transactional Outbox (optional package)
+### Transactional Outbox (optional packages)
 
 The separate `s4ndr0ne.SimpleMediator.Outbox` package provides provider-agnostic storage/serialization
-contracts, `IOutboxPublisher`, `IOutboxSignal`, and a hosted dispatcher. It intentionally does not choose a database,
-serializer, or schema. Register your implementations and the package services:
+contracts, `IOutboxPublisher`, `IOutboxSignal`, an AOT-safe `System.Text.Json` serializer (`AddJsonOutboxSerializer`),
+and a hosted dispatcher. For SQL Server, `s4ndr0ne.SimpleMediator.Outbox.SqlServer` provides a ready-to-use
+`IOutboxStore` backed by `Microsoft.Data.SqlClient` (`UPDLOCK, READPAST, ROWLOCK`, `ISqlServerOutboxSession`,
+configurable `MaxAttempts` dead-lettering, and opt-in schema creation):
 
 ```csharp
 services.AddSimpleMediator(options => options.RegisterAssembly(typeof(Program).Assembly));
-services.AddScoped<IOutboxStore, MyOutboxStore>();
-services.AddSingleton<IOutboxSerializer, MyOutboxSerializer>();
+services.AddJsonOutboxSerializer(serializer =>
+    serializer.AddNotification("order.created.v1", AppJsonContext.Default.OrderCreatedNotification));
+services.AddSqlServerOutboxStore(options =>
+{
+    options.ConnectionString = connectionString;
+    options.MaxAttempts = 5;
+    options.EnsureSchemaOnStartup = true; // opt-in DDL creation
+});
 services.AddSimpleMediatorOutbox(options =>
 {
     options.BatchSize = 32;
@@ -383,7 +396,7 @@ services.AddSimpleMediatorOutbox(options =>
 });
 ```
 
-Inject `IOutboxPublisher` where notifications are raised and call `Publish` (which persists via `IOutboxStore.EnqueueAsync` and immediately pulses `IOutboxSignal` so the background worker wakes up without waiting for `PollingInterval`). Both `OutboxPublisher` and `OutboxDispatcherService` use `TimeProvider` (defaulting to `TimeProvider.System` via `TryAddSingleton`) for deterministic testing. While a handler runs, the worker renews the lease every `LeaseRenewalInterval` (20 seconds by default, less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but before the row was marked processed, so notification handlers should be idempotent. `TryClaimAsync` must atomically lease a row across workers and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and `MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false` when the lease expired or another worker reclaimed the message. The store implementation owns persistence schema, attempt limits, and dead-letter policy.
+Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` (which persists via `IOutboxStore.EnqueueAsync` and immediately pulses `IOutboxSignal` so the background worker wakes up without waiting for `PollingInterval`). When using `s4ndr0ne.SimpleMediator.Outbox.SqlServer`, bind the active `SqlConnection` and `SqlTransaction` via `ISqlServerOutboxSession.UseTransaction(connection, transaction)` so `EnqueueAsync` participates in your application transaction; see [SimpleMediator.OutboxSqlServerSample](samples/SimpleMediator.OutboxSqlServerSample/Program.cs) for a complete runnable example. Both `OutboxPublisher` and `OutboxDispatcherService` use `TimeProvider` (defaulting to `TimeProvider.System` via `TryAddSingleton`) for deterministic testing. While a handler runs, the worker renews the lease every `LeaseRenewalInterval` (20 seconds by default, less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but before the row was marked processed, so notification handlers should be idempotent. `ClaimBatchAsync` must atomically lease rows across workers and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and `MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false` when the lease expired or another worker reclaimed the message.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.

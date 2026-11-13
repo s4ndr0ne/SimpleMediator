@@ -1,1 +1,9 @@
 #nullable enable
+SimpleMediator.Outbox.JsonOutboxSerializer
+SimpleMediator.Outbox.JsonOutboxSerializer.Deserialize(SimpleMediator.Outbox.OutboxMessage! message) -> SimpleMediator.Outbox.IOutboxDispatchable!
+SimpleMediator.Outbox.JsonOutboxSerializer.Serialize(SimpleMediator.Interfaces.INotification! notification, System.Guid messageId, System.DateTimeOffset occurredAtUtc) -> SimpleMediator.Outbox.OutboxMessage!
+SimpleMediator.Outbox.JsonOutboxSerializerBuilder
+SimpleMediator.Outbox.JsonOutboxSerializerBuilder.AddNotification<TNotification>(string! typeKey, System.Text.Json.Serialization.Metadata.JsonTypeInfo<TNotification>! jsonTypeInfo) -> SimpleMediator.Outbox.JsonOutboxSerializerBuilder!
+SimpleMediator.Outbox.JsonOutboxSerializerBuilder.Build() -> SimpleMediator.Outbox.JsonOutboxSerializer!
+SimpleMediator.Outbox.JsonOutboxSerializerBuilder.JsonOutboxSerializerBuilder() -> void
+static SimpleMediator.Outbox.OutboxServiceCollectionExtensions.AddJsonOutboxSerializer(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.Outbox.JsonOutboxSerializerBuilder!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
