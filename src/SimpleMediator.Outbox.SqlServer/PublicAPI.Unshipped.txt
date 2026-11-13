@@ -28,3 +28,17 @@ SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.MarkFailedAsync(SimpleMedia
 SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.MarkProcessedAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset processedAtUtc, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
 SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.RenewLeaseAsync(SimpleMediator.Outbox.OutboxLease! lease, System.DateTimeOffset nowUtc, System.TimeSpan leaseDuration, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<bool>!
 SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.SqlServerOutboxStore(Microsoft.Extensions.Options.IOptions<SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions!>! options, SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession? session = null, System.TimeProvider? timeProvider = null) -> void
+SimpleMediator.Outbox.SqlServer.ISqlServerOutboxSession.BeginScope(Microsoft.Data.SqlClient.SqlConnection! connection, Microsoft.Data.SqlClient.SqlTransaction? transaction = null) -> System.IDisposable!
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.DeadLetterRetention.get -> System.TimeSpan?
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.DeadLetterRetention.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.EnqueueRequiresTransaction.get -> bool
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.EnqueueRequiresTransaction.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.MaxPurgeBatchesPerCycle.get -> int
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.MaxPurgeBatchesPerCycle.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.ProcessedMessageRetention.get -> System.TimeSpan?
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.ProcessedMessageRetention.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.PurgeBatchSize.get -> int
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.PurgeBatchSize.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.PurgeInterval.get -> System.TimeSpan
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxOptions.PurgeInterval.set -> void
+SimpleMediator.Outbox.SqlServer.SqlServerOutboxStore.PurgeAsync(System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) -> System.Threading.Tasks.Task<int>!

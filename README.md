@@ -374,8 +374,9 @@ lifetime depend on module registration order.
 The separate `s4ndr0ne.SimpleMediator.Outbox` package provides provider-agnostic storage/serialization
 contracts, `IOutboxPublisher`, `IOutboxSignal`, an AOT-safe `System.Text.Json` serializer (`AddJsonOutboxSerializer`),
 and a hosted dispatcher. For SQL Server, `s4ndr0ne.SimpleMediator.Outbox.SqlServer` provides a ready-to-use
-`IOutboxStore` backed by `Microsoft.Data.SqlClient` (`UPDLOCK, READPAST, ROWLOCK`, `ISqlServerOutboxSession`,
-configurable `MaxAttempts` dead-lettering, and opt-in schema creation):
+`IOutboxStore` backed by `Microsoft.Data.SqlClient` (`UPDLOCK, READPAST, ROWLOCK` claiming, lease tokens,
+configurable `MaxAttempts` dead-lettering, opt-in schema creation with an application-lock guard, and a
+retention/purge worker):
 
 ```csharp
 services.AddSimpleMediator(options => options.RegisterAssembly(typeof(Program).Assembly));
@@ -385,7 +386,10 @@ services.AddSqlServerOutboxStore(options =>
 {
     options.ConnectionString = connectionString;
     options.MaxAttempts = 5;
-    options.EnsureSchemaOnStartup = true; // opt-in DDL creation
+    options.EnsureSchemaOnStartup = true;              // opt-in DDL creation, serialized across instances
+    options.ProcessedMessageRetention = TimeSpan.FromDays(7);  // null disables purging
+    options.DeadLetterRetention = TimeSpan.FromDays(30);
+    options.PurgeInterval = TimeSpan.FromHours(1);
 });
 services.AddSimpleMediatorOutbox(options =>
 {
@@ -393,10 +397,43 @@ services.AddSimpleMediatorOutbox(options =>
     options.PollingInterval = TimeSpan.FromSeconds(5);
     options.ClaimFullBatch = true;        // Claim the whole batch up front to reduce multi-worker contention
     options.MaxDegreeOfParallelism = 4;   // Dispatch up to 4 leased messages concurrently in isolated DI scopes
+    options.RetryDelay = TimeSpan.FromSeconds(10); // Retries wait 10s, 20s, 40s... capped by MaxRetryDelay
+    options.RetryBackoffMultiplier = 2;
+    options.MaxRetryDelay = TimeSpan.FromMinutes(5);
+    options.RetryJitterFactor = 0.2;      // ±20%, deterministic per lease token
 });
 ```
 
-Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` (which persists via `IOutboxStore.EnqueueAsync` and immediately pulses `IOutboxSignal` so the background worker wakes up without waiting for `PollingInterval`). When using `s4ndr0ne.SimpleMediator.Outbox.SqlServer`, bind the active `SqlConnection` and `SqlTransaction` via `ISqlServerOutboxSession.UseTransaction(connection, transaction)` so `EnqueueAsync` participates in your application transaction; see [SimpleMediator.OutboxSqlServerSample](samples/SimpleMediator.OutboxSqlServerSample/Program.cs) for a complete runnable example. Both `OutboxPublisher` and `OutboxDispatcherService` use `TimeProvider` (defaulting to `TimeProvider.System` via `TryAddSingleton`) for deterministic testing. While a handler runs, the worker renews the lease every `LeaseRenewalInterval` (20 seconds by default, less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but before the row was marked processed, so notification handlers should be idempotent. `ClaimBatchAsync` must atomically lease rows across workers and return a unique `OutboxLease.LeaseToken` per claim. `RenewLeaseAsync`, `MarkProcessedAsync` and `MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false` when the lease expired or another worker reclaimed the message.
+Inject `IOutboxPublisher` where notifications are raised and call `EnqueueAsync` (which persists via `IOutboxStore.EnqueueAsync` and immediately pulses `IOutboxSignal` so the background worker wakes up without waiting for `PollingInterval`).
+
+**Enqueue must run inside your application transaction.** `SqlServerOutboxOptions.EnqueueRequiresTransaction`
+defaults to `true` and `EnqueueAsync` throws instead of silently writing outside the transaction. Bind the
+transaction with `ISqlServerOutboxSession.BeginScope(...)` (nesting- and async-flow-safe, restores any outer
+binding on dispose) or `UseTransaction(...)` plus `Clear()`:
+
+```csharp
+await using var connection = new SqlConnection(connectionString);
+await connection.OpenAsync(ct);
+await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+using var outboxScope = outboxSession.BeginScope(connection, transaction);
+
+await outboxPublisher.EnqueueAsync(new OrderCreatedNotification(orderId, item), ct);
+await transaction.CommitAsync(ct);
+```
+
+With EF Core, enlist the `DbContext` transaction instead of opening a connection yourself:
+
+```csharp
+await using var transaction = await db.Database.BeginTransactionAsync(ct);
+using var outboxScope = outboxSession.BeginScope(
+    (SqlConnection)db.Database.GetDbConnection(),
+    (SqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction());
+
+await outboxPublisher.EnqueueAsync(new OrderCreatedNotification(orderId, item), ct);
+await transaction.CommitAsync(ct);
+```
+
+See [SimpleMediator.OutboxSqlServerSample](samples/SimpleMediator.OutboxSqlServerSample/Program.cs) for a complete runnable example. Both `OutboxPublisher` and `OutboxDispatcherService` use `TimeProvider` (defaulting to `TimeProvider.System` via `TryAddSingleton`) for deterministic testing. While a handler runs, the worker renews the lease every `LeaseRenewalInterval` (20 seconds by default, less than the one-minute default lease); a lost lease cancels dispatch. Delivery is **at least once**, not exactly once: a process can fail after a handler ran but before the row was marked processed, so notification handlers should be idempotent. `ClaimBatchAsync` must atomically lease rows across workers and return a unique `OutboxLease.LeaseToken` per claim; stores should also populate `OutboxLease.Attempts` so the dispatcher can back off exponentially. `RenewLeaseAsync`, `MarkProcessedAsync` and `MarkFailedAsync` must act only when that token is still current; `RenewLeaseAsync` returns `false` when the lease expired or another worker reclaimed the message.
 
 ### Pre / Post Request Handlers
 Lightweight hooks that run *inside* the behavior pipeline, right before or after the main handler.

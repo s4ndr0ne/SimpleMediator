@@ -32,12 +32,17 @@ builder.Services.AddSqlServerOutboxStore(options =>
     options.TableName = "OutboxMessages";
     options.MaxAttempts = 5;
     options.EnsureSchemaOnStartup = true;
+    options.ProcessedMessageRetention = TimeSpan.FromDays(3);
+    options.DeadLetterRetention = TimeSpan.FromDays(7);
 });
 
 builder.Services.AddSimpleMediatorOutbox(options =>
 {
     options.BatchSize = 16;
     options.PollingInterval = TimeSpan.FromSeconds(2);
+    options.RetryDelay = TimeSpan.FromSeconds(5);
+    options.RetryBackoffMultiplier = 2;
+    options.MaxRetryDelay = TimeSpan.FromMinutes(2);
 });
 
 builder.Services.AddSingleton(new DeliverySignal());
@@ -78,27 +83,18 @@ public sealed class CreateOrderHandler(
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        outboxSession.UseTransaction(connection, transaction);
-        try
-        {
-            // Persist application entities on (connection, transaction) here...
+        // BeginScope binds the transaction for this async flow and restores any outer binding on dispose.
+        // SqlServerOutboxOptions.EnqueueRequiresTransaction (on by default) rejects enqueues outside it.
+        using var outboxScope = outboxSession.BeginScope(connection, transaction);
 
-            await outboxPublisher.EnqueueAsync(
-                new OrderCreatedNotification(orderId, request.ItemName),
-                cancellationToken);
+        // Persist application entities on (connection, transaction) here...
 
-            await transaction.CommitAsync(cancellationToken);
-            return orderId;
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
-        finally
-        {
-            outboxSession.Clear();
-        }
+        await outboxPublisher.EnqueueAsync(
+            new OrderCreatedNotification(orderId, request.ItemName),
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+        return orderId;
     }
 }
 

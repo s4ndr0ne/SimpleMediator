@@ -7,3 +7,11 @@ SimpleMediator.Outbox.JsonOutboxSerializerBuilder.AddNotification<TNotification>
 SimpleMediator.Outbox.JsonOutboxSerializerBuilder.Build() -> SimpleMediator.Outbox.JsonOutboxSerializer!
 SimpleMediator.Outbox.JsonOutboxSerializerBuilder.JsonOutboxSerializerBuilder() -> void
 static SimpleMediator.Outbox.OutboxServiceCollectionExtensions.AddJsonOutboxSerializer(this Microsoft.Extensions.DependencyInjection.IServiceCollection! services, System.Action<SimpleMediator.Outbox.JsonOutboxSerializerBuilder!>! configure) -> Microsoft.Extensions.DependencyInjection.IServiceCollection!
+SimpleMediator.Outbox.OutboxLease.Attempts.get -> int
+SimpleMediator.Outbox.OutboxLease.Attempts.init -> void
+SimpleMediator.Outbox.OutboxOptions.MaxRetryDelay.get -> System.TimeSpan
+SimpleMediator.Outbox.OutboxOptions.MaxRetryDelay.set -> void
+SimpleMediator.Outbox.OutboxOptions.RetryBackoffMultiplier.get -> double
+SimpleMediator.Outbox.OutboxOptions.RetryBackoffMultiplier.set -> void
+SimpleMediator.Outbox.OutboxOptions.RetryJitterFactor.get -> double
+SimpleMediator.Outbox.OutboxOptions.RetryJitterFactor.set -> void

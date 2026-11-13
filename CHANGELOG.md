@@ -8,8 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - **AOT-safe `System.Text.Json` outbox serializer (`SimpleMediator.Outbox`):** added `JsonOutboxSerializer`, `JsonOutboxSerializerBuilder`, and `AddJsonOutboxSerializer(...)` using explicit stable type keys and `JsonTypeInfo<TNotification>` metadata without runtime reflection.
-- **SQL Server outbox store package (`s4ndr0ne.SimpleMediator.Outbox.SqlServer`):** added `SqlServerOutboxStore`, `SqlServerOutboxOptions`, `ISqlServerOutboxSession` (ambient `SqlConnection`/`SqlTransaction` binding for `EnqueueAsync`), `AddSqlServerOutboxStore(...)`, atomic `UPDLOCK, READPAST, ROWLOCK` batch claiming with `NEWID()` lease tokens, configurable `MaxAttempts` dead-lettering (`DeadLetteredAtUtc`), and opt-in `EnsureSchemaAsync` / `EnsureSchemaOnStartup`.
-- **SQL Server outbox sample (`samples/SimpleMediator.OutboxSqlServerSample`):** added an end-to-end sample demonstrating `AddJsonOutboxSerializer`, `AddSqlServerOutboxStore`, and `ISqlServerOutboxSession.UseTransaction(...)`.
+- **Exponential retry backoff (`SimpleMediator.Outbox`):** `OutboxOptions` now exposes `RetryBackoffMultiplier`, `MaxRetryDelay`, and `RetryJitterFactor`; the dispatcher computes the delay from `OutboxLease.Attempts` with deterministic jitter derived from the lease token, so a poison message is no longer retried at a fixed interval. Stores that do not track attempts keep the previous fixed-delay behavior.
+- **SQL Server outbox store package (`s4ndr0ne.SimpleMediator.Outbox.SqlServer`):** added `SqlServerOutboxStore`, `SqlServerOutboxOptions`, `ISqlServerOutboxSession` (`BeginScope`/`UseTransaction` ambient `SqlConnection`/`SqlTransaction` binding for `EnqueueAsync`), `AddSqlServerOutboxStore(...)`, atomic `UPDLOCK, READPAST, ROWLOCK` batch claiming with `NEWID()` lease tokens, configurable `MaxAttempts` dead-lettering (`DeadLetteredAtUtc`), opt-in `EnsureSchemaAsync` / `EnsureSchemaOnStartup` serialized by a SQL Server application lock, and a retention purge worker (`ProcessedMessageRetention`, `DeadLetterRetention`, `PurgeInterval`, `PurgeBatchSize`, `MaxPurgeBatchesPerCycle`, `SqlServerOutboxStore.PurgeAsync`).
+- **SQL Server outbox sample (`samples/SimpleMediator.OutboxSqlServerSample`):** added an end-to-end sample demonstrating `AddJsonOutboxSerializer`, `AddSqlServerOutboxStore`, and `ISqlServerOutboxSession.BeginScope(...)`.
+
+### Changed
+- **SQL Server outbox enqueue fails closed:** `SqlServerOutboxOptions.EnqueueRequiresTransaction` defaults to `true`, so `EnqueueAsync` throws instead of silently writing outside the application transaction when no transaction is bound. Set it to `false` only for non-transactional writers.
+- `ISqlServerOutboxSession` now stores its binding in an `AsyncLocal` stack, so parallel handlers in one DI scope no longer overwrite each other's connection and `BeginScope` restores any outer binding; `Clear` removes only the innermost binding.
+- The SQL Server outbox schema stores `LastError` as `NVARCHAR(4000)` and truncates longer errors instead of using `NVARCHAR(MAX)`, and creates filtered indexes for the purge queries in addition to the pending index (existing deployments get them on the next `EnsureSchemaAsync`).
+- `MarkFailedAsync` no longer moves `AvailableAtUtc` when the message is dead-lettered, keeping the retry schedule meaningful for dead-lettered rows.
+
+### Fixed
+- **Test coverage for the SQL Server store:** added Testcontainers-backed integration tests that run against a real SQL Server instance (transactional enqueue and rollback, fail-closed enqueue, concurrent claim uniqueness, lease expiry/reclaim fencing, attempt counting, dead-lettering, purge, and concurrent schema creation). They skip when Docker is unavailable.
+
 
 ## [4.3.0] - 2026-11-12
 

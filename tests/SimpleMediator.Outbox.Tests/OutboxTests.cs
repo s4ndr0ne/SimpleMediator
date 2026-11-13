@@ -44,6 +44,9 @@ public sealed class OutboxTests
         Assert.Equal(TimeSpan.FromMilliseconds(25), options.PollingInterval);
         Assert.Equal(TimeSpan.FromSeconds(20), options.LeaseRenewalInterval);
         Assert.Equal(TimeSpan.FromSeconds(10), options.RetryDelay);
+        Assert.Equal(2, options.RetryBackoffMultiplier);
+        Assert.Equal(TimeSpan.FromMinutes(5), options.MaxRetryDelay);
+        Assert.Equal(0.2, options.RetryJitterFactor);
         Assert.Single(provider.GetServices<IHostedService>());
     }
 

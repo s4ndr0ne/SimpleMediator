@@ -24,4 +24,7 @@ internal static partial class OutboxLog
 
     [LoggerMessage(7, LogLevel.Error, "Failed to prepare outbox message {OutboxMessageId} for dispatch.")]
     internal static partial void DispatchSetupFailed(ILogger logger, Exception exception, Guid outboxMessageId);
+
+    [LoggerMessage(8, LogLevel.Warning, "Outbox message {OutboxMessageId} failed; retrying at {RetryAtUtc} (delay {RetryDelay}).")]
+    internal static partial void RetryScheduled(ILogger logger, Guid outboxMessageId, DateTimeOffset retryAtUtc, TimeSpan retryDelay);
 }

@@ -43,6 +43,15 @@ public static class OutboxServiceCollectionExtensions
             static options => options.RetryDelay >= TimeSpan.Zero,
             "RetryDelay cannot be negative.");
         builder.Validate(
+            static options => options.RetryBackoffMultiplier >= 1,
+            "RetryBackoffMultiplier must be at least 1.");
+        builder.Validate(
+            static options => options.MaxRetryDelay > TimeSpan.Zero,
+            "MaxRetryDelay must be greater than zero.");
+        builder.Validate(
+            static options => options.RetryJitterFactor is >= 0 and <= 1,
+            "RetryJitterFactor must be between 0 and 1.");
+        builder.Validate(
             static options => options.MaxDegreeOfParallelism > 0,
             "MaxDegreeOfParallelism must be greater than zero.");
 

@@ -315,12 +315,18 @@ internal sealed class OutboxDispatcherService(
     {
         try
         {
+            var retryDelay = OutboxRetrySchedule.GetDelay(_options, lease);
+            var retryAtUtc = _timeProvider.GetUtcNow().Add(retryDelay);
             var released = await store.MarkFailedAsync(
                 lease,
-                _timeProvider.GetUtcNow().Add(_options.RetryDelay),
+                retryAtUtc,
                 exception.ToString(),
                 CancellationToken.None).ConfigureAwait(false);
-            if (!released)
+            if (released)
+            {
+                OutboxLog.RetryScheduled(_logger, lease.Message.Id, retryAtUtc, retryDelay);
+            }
+            else
             {
                 OutboxLog.LeaseLost(_logger, lease.Message.Id);
             }

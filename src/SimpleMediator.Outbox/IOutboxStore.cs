@@ -18,6 +18,11 @@ public interface IOutboxStore
     /// <param name="nowUtc">Current UTC time used to select eligible messages.</param>
     /// <param name="leaseDuration">How long the claim remains valid if the worker stops.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <remarks>
+    /// Populate <see cref="OutboxLease.Attempts"/> with the number of failed delivery attempts already
+    /// recorded for each message so the dispatcher can compute exponential backoff. When the store does
+    /// not track attempts, leave it at its default of <c>0</c> and every retry uses the base delay.
+    /// </remarks>
     Task<IReadOnlyList<OutboxLease>> ClaimBatchAsync(
         int batchSize,
         DateTimeOffset nowUtc,

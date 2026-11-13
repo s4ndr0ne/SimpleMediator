@@ -7,6 +7,11 @@ namespace SimpleMediator.Outbox.SqlServer;
 /// <summary>SQL Server <see cref="IOutboxStore"/> implementation backed by <see cref="Microsoft.Data.SqlClient"/>.</summary>
 public sealed class SqlServerOutboxStore : IOutboxStore
 {
+    private const string AmbientTransactionRequiredMessage =
+        "The outbox message must be enqueued inside the application transaction. Call " +
+        "ISqlServerOutboxSession.UseTransaction(connection, transaction) (or BeginScope) before enqueuing, " +
+        "or set SqlServerOutboxOptions.EnqueueRequiresTransaction = false to allow standalone writes.";
+
     private readonly SqlServerOutboxOptions _options;
     private readonly ISqlServerOutboxSession? _session;
     private readonly TimeProvider _timeProvider;
@@ -25,7 +30,12 @@ public sealed class SqlServerOutboxStore : IOutboxStore
         _sql = new SqlServerOutboxSql(_options.SchemaName, _options.TableName);
     }
 
-    /// <summary>Creates the outbox table and pending index if they do not already exist.</summary>
+    /// <summary>Creates the outbox table and its indexes if they do not already exist.</summary>
+    /// <remarks>
+    /// Schema creation is serialized across application instances with a SQL Server application lock, so a
+    /// rolling deployment cannot race two <c>CREATE</c> statements. Prefer a migration for production
+    /// deployments and use this only for development or self-provisioning services.
+    /// </remarks>
     public async Task EnsureSchemaAsync(CancellationToken cancellationToken = default)
     {
         var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -37,20 +47,41 @@ public sealed class SqlServerOutboxStore : IOutboxStore
     }
 
     /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">
+    /// No ambient transaction is bound and <see cref="SqlServerOutboxOptions.EnqueueRequiresTransaction"/> is
+    /// <see langword="true"/>.
+    /// </exception>
     public async Task EnqueueAsync(OutboxMessage message, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(message);
 
         if (_session?.Connection is { } ambientConnection)
         {
+            var transaction = _session.Transaction;
+            if (transaction is not null && !ReferenceEquals(transaction.Connection, ambientConnection))
+            {
+                throw new InvalidOperationException(
+                    "The ambient outbox transaction belongs to a different connection than the bound session connection.");
+            }
+
+            if (transaction is null && _options.EnqueueRequiresTransaction)
+            {
+                throw new InvalidOperationException(AmbientTransactionRequiredMessage);
+            }
+
             if (ambientConnection.State != ConnectionState.Open)
             {
                 await ambientConnection.OpenAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            using var ambientCommand = CreateEnqueueCommand(ambientConnection, _session.Transaction, message);
+            using var ambientCommand = CreateEnqueueCommand(ambientConnection, transaction, message);
             await ambientCommand.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return;
+        }
+
+        if (_options.EnqueueRequiresTransaction)
+        {
+            throw new InvalidOperationException(AmbientTransactionRequiredMessage);
         }
 
         var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
@@ -94,7 +125,8 @@ public sealed class SqlServerOutboxStore : IOutboxStore
                         reader.GetDateTimeOffset(3));
 
                     var leaseToken = reader.GetGuid(4);
-                    leases.Add(new OutboxLease(message, leaseToken));
+                    var attempts = reader.GetInt32(5);
+                    leases.Add(new OutboxLease(message, leaseToken) { Attempts = attempts });
                 }
             }
         }
@@ -163,7 +195,7 @@ public sealed class SqlServerOutboxStore : IOutboxStore
             using var command = CreateCommand(connection, null, _sql.MarkFailedSql);
             command.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = lease.Message.Id });
             command.Parameters.Add(new SqlParameter("@LeaseToken", SqlDbType.UniqueIdentifier) { Value = lease.LeaseToken });
-            command.Parameters.Add(new SqlParameter("@Error", SqlDbType.NVarChar, -1) { Value = error });
+            command.Parameters.Add(new SqlParameter("@Error", SqlDbType.NVarChar, SqlServerOutboxSql.MaxErrorLength) { Value = TruncateError(error) });
             command.Parameters.Add(new SqlParameter("@RetryAtUtc", SqlDbType.DateTimeOffset) { Value = retryAtUtc });
             command.Parameters.Add(new SqlParameter("@MaxAttempts", SqlDbType.Int) { Value = _options.MaxAttempts });
             command.Parameters.Add(new SqlParameter("@NowUtc", SqlDbType.DateTimeOffset) { Value = _timeProvider.GetUtcNow() });
@@ -171,6 +203,62 @@ public sealed class SqlServerOutboxStore : IOutboxStore
             var affected = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             return affected > 0;
         }
+    }
+
+    /// <summary>
+    /// Deletes processed and dead-lettered messages older than their configured retention windows.
+    /// Deletion runs in batches bounded by <see cref="SqlServerOutboxOptions.PurgeBatchSize"/> and
+    /// <see cref="SqlServerOutboxOptions.MaxPurgeBatchesPerCycle"/>.
+    /// </summary>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The number of rows deleted.</returns>
+    public async Task<int> PurgeAsync(CancellationToken cancellationToken = default)
+    {
+        var nowUtc = _timeProvider.GetUtcNow();
+        var purged = 0;
+
+        if (_options.ProcessedMessageRetention is { } processedRetention)
+        {
+            purged += await PurgeCategoryAsync(
+                _sql.PurgeProcessedSql,
+                nowUtc - processedRetention,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        if (_options.DeadLetterRetention is { } deadLetterRetention)
+        {
+            purged += await PurgeCategoryAsync(
+                _sql.PurgeDeadLetteredSql,
+                nowUtc - deadLetterRetention,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return purged;
+    }
+
+    private async Task<int> PurgeCategoryAsync(string sql, DateTimeOffset cutoffUtc, CancellationToken cancellationToken)
+    {
+        var deleted = 0;
+        for (var batch = 0; batch < _options.MaxPurgeBatchesPerCycle; batch++)
+        {
+            var affected = 0;
+            var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using (connection.ConfigureAwait(false))
+            {
+                using var command = CreateCommand(connection, null, sql);
+                command.Parameters.Add(new SqlParameter("@BatchSize", SqlDbType.Int) { Value = _options.PurgeBatchSize });
+                command.Parameters.Add(new SqlParameter("@CutoffUtc", SqlDbType.DateTimeOffset) { Value = cutoffUtc });
+                affected = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            deleted += affected;
+            if (affected < _options.PurgeBatchSize)
+            {
+                break;
+            }
+        }
+
+        return deleted;
     }
 
     private async Task<SqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)
@@ -196,6 +284,19 @@ public sealed class SqlServerOutboxStore : IOutboxStore
         command.Parameters.Add(new SqlParameter("@Payload", SqlDbType.NVarChar, -1) { Value = message.Payload });
         command.Parameters.Add(new SqlParameter("@OccurredAtUtc", SqlDbType.DateTimeOffset) { Value = message.OccurredAtUtc });
         return command;
+    }
+
+    private static string TruncateError(string error)
+    {
+        if (error.Length <= SqlServerOutboxSql.MaxErrorLength)
+        {
+            return error;
+        }
+
+        var length = char.IsHighSurrogate(error[SqlServerOutboxSql.MaxErrorLength - 1])
+            ? SqlServerOutboxSql.MaxErrorLength - 1
+            : SqlServerOutboxSql.MaxErrorLength;
+        return error[..length];
     }
 
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA2100:Review SQL queries for security vulnerabilities", Justification = "SQL statements only interpolate validated SQL identifiers from SqlServerOutboxSql.")]

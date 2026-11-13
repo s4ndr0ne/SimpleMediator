@@ -2,6 +2,11 @@ namespace SimpleMediator.Outbox.SqlServer;
 
 internal sealed class SqlServerOutboxSql
 {
+    /// <summary>Maximum length stored in <c>LastError</c>; longer error text is truncated by the store.</summary>
+    internal const int MaxErrorLength = 4000;
+
+    private const int MaxTableNameLength = 100;
+
     public string QualifiedTableName { get; }
 
     public string EnsureSchemaSql { get; }
@@ -16,43 +21,89 @@ internal sealed class SqlServerOutboxSql
 
     public string MarkFailedSql { get; }
 
+    public string PurgeProcessedSql { get; }
+
+    public string PurgeDeadLetteredSql { get; }
+
     public SqlServerOutboxSql(string schemaName, string tableName)
     {
         ValidateIdentifier(schemaName, nameof(schemaName));
         ValidateIdentifier(tableName, nameof(tableName));
+        ValidateTableName(tableName);
 
         QualifiedTableName = $"[{schemaName}].[{tableName}]";
-        var indexName = $"IX_{tableName}_Pending";
+        var pendingIndexName = $"IX_{tableName}_Pending";
+        var processedIndexName = $"IX_{tableName}_Processed";
+        var deadLetterIndexName = $"IX_{tableName}_DeadLettered";
         var objectFullName = $"{schemaName}.{tableName}";
+        var schemaLockResource = $"SimpleMediator.Outbox.Schema.{objectFullName}";
 
         EnsureSchemaSql = $"""
-            IF SCHEMA_ID(N'{schemaName}') IS NULL
+            DECLARE @LockResult INT;
+
+            EXEC @LockResult = sys.sp_getapplock
+                @Resource = N'{schemaLockResource}',
+                @LockMode = 'Exclusive',
+                @LockOwner = 'Session',
+                @LockTimeout = 30000;
+
+            IF @LockResult < 0
             BEGIN
-                EXEC(N'CREATE SCHEMA [{schemaName}]');
+                THROW 50000, N'Could not acquire the outbox schema lock; another instance may be creating the schema.', 1;
             END;
 
-            IF OBJECT_ID(N'{objectFullName}', N'U') IS NULL
-            BEGIN
-                CREATE TABLE {QualifiedTableName}
-                (
-                    Id UNIQUEIDENTIFIER NOT NULL CONSTRAINT [PK_{tableName}] PRIMARY KEY,
-                    Type NVARCHAR(256) NOT NULL,
-                    Payload NVARCHAR(MAX) NOT NULL,
-                    OccurredAtUtc DATETIMEOFFSET(7) NOT NULL,
-                    AvailableAtUtc DATETIMEOFFSET(7) NOT NULL,
-                    Attempts INT NOT NULL CONSTRAINT [DF_{tableName}_Attempts] DEFAULT (0),
-                    LastError NVARCHAR(MAX) NULL,
-                    LeaseToken UNIQUEIDENTIFIER NULL,
-                    LeaseExpiresAtUtc DATETIMEOFFSET(7) NULL,
-                    ProcessedAtUtc DATETIMEOFFSET(7) NULL,
-                    DeadLetteredAtUtc DATETIMEOFFSET(7) NULL
-                );
+            BEGIN TRY
+                IF SCHEMA_ID(N'{schemaName}') IS NULL
+                BEGIN
+                    EXEC(N'CREATE SCHEMA [{schemaName}]');
+                END;
 
-                CREATE NONCLUSTERED INDEX [{indexName}]
-                ON {QualifiedTableName} (AvailableAtUtc ASC, OccurredAtUtc ASC)
-                INCLUDE (LeaseExpiresAtUtc)
-                WHERE ProcessedAtUtc IS NULL AND DeadLetteredAtUtc IS NULL;
-            END;
+                IF OBJECT_ID(N'{objectFullName}', N'U') IS NULL
+                BEGIN
+                    CREATE TABLE {QualifiedTableName}
+                    (
+                        Id UNIQUEIDENTIFIER NOT NULL CONSTRAINT [PK_{tableName}] PRIMARY KEY,
+                        Type NVARCHAR(256) NOT NULL,
+                        Payload NVARCHAR(MAX) NOT NULL,
+                        OccurredAtUtc DATETIMEOFFSET(7) NOT NULL,
+                        AvailableAtUtc DATETIMEOFFSET(7) NOT NULL,
+                        Attempts INT NOT NULL CONSTRAINT [DF_{tableName}_Attempts] DEFAULT (0),
+                        LastError NVARCHAR({MaxErrorLength}) NULL,
+                        LeaseToken UNIQUEIDENTIFIER NULL,
+                        LeaseExpiresAtUtc DATETIMEOFFSET(7) NULL,
+                        ProcessedAtUtc DATETIMEOFFSET(7) NULL,
+                        DeadLetteredAtUtc DATETIMEOFFSET(7) NULL
+                    );
+                END;
+
+                IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{pendingIndexName}' AND object_id = OBJECT_ID(N'{objectFullName}'))
+                BEGIN
+                    CREATE NONCLUSTERED INDEX [{pendingIndexName}]
+                    ON {QualifiedTableName} (AvailableAtUtc ASC, OccurredAtUtc ASC)
+                    INCLUDE (LeaseExpiresAtUtc)
+                    WHERE ProcessedAtUtc IS NULL AND DeadLetteredAtUtc IS NULL;
+                END;
+
+                IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{processedIndexName}' AND object_id = OBJECT_ID(N'{objectFullName}'))
+                BEGIN
+                    CREATE NONCLUSTERED INDEX [{processedIndexName}]
+                    ON {QualifiedTableName} (ProcessedAtUtc ASC)
+                    WHERE ProcessedAtUtc IS NOT NULL;
+                END;
+
+                IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'{deadLetterIndexName}' AND object_id = OBJECT_ID(N'{objectFullName}'))
+                BEGIN
+                    CREATE NONCLUSTERED INDEX [{deadLetterIndexName}]
+                    ON {QualifiedTableName} (DeadLetteredAtUtc ASC)
+                    WHERE DeadLetteredAtUtc IS NOT NULL;
+                END;
+            END TRY
+            BEGIN CATCH
+                EXEC sys.sp_releaseapplock @Resource = N'{schemaLockResource}', @LockOwner = 'Session';
+                THROW;
+            END CATCH;
+
+            EXEC sys.sp_releaseapplock @Resource = N'{schemaLockResource}', @LockOwner = 'Session';
             """;
 
         EnqueueSql = $"""
@@ -68,6 +119,7 @@ internal sealed class SqlServerOutboxSql
                     Type,
                     Payload,
                     OccurredAtUtc,
+                    Attempts,
                     LeaseToken,
                     LeaseExpiresAtUtc
                 FROM {QualifiedTableName} WITH (UPDLOCK, READPAST, ROWLOCK)
@@ -85,7 +137,8 @@ internal sealed class SqlServerOutboxSql
                 inserted.Type,
                 inserted.Payload,
                 inserted.OccurredAtUtc,
-                inserted.LeaseToken;
+                inserted.LeaseToken,
+                inserted.Attempts;
             """;
 
         RenewLeaseSql = $"""
@@ -98,6 +151,9 @@ internal sealed class SqlServerOutboxSql
               AND LeaseExpiresAtUtc > @NowUtc;
             """;
 
+        // Completion is intentionally allowed while the lease is still owned even if it has just
+        // expired: the token fences out other workers, and letting the owner record success avoids
+        // redelivering a message whose handler already ran.
         MarkProcessedSql = $"""
             UPDATE {QualifiedTableName}
             SET ProcessedAtUtc = @ProcessedAtUtc,
@@ -113,7 +169,7 @@ internal sealed class SqlServerOutboxSql
             UPDATE {QualifiedTableName}
             SET Attempts = Attempts + 1,
                 LastError = @Error,
-                AvailableAtUtc = @RetryAtUtc,
+                AvailableAtUtc = CASE WHEN Attempts + 1 >= @MaxAttempts THEN AvailableAtUtc ELSE @RetryAtUtc END,
                 LeaseToken = NULL,
                 LeaseExpiresAtUtc = NULL,
                 DeadLetteredAtUtc = CASE WHEN Attempts + 1 >= @MaxAttempts THEN @NowUtc ELSE NULL END
@@ -121,6 +177,18 @@ internal sealed class SqlServerOutboxSql
               AND LeaseToken = @LeaseToken
               AND ProcessedAtUtc IS NULL
               AND DeadLetteredAtUtc IS NULL;
+            """;
+
+        PurgeProcessedSql = $"""
+            DELETE TOP (@BatchSize) FROM {QualifiedTableName}
+            WHERE ProcessedAtUtc IS NOT NULL
+              AND ProcessedAtUtc < @CutoffUtc;
+            """;
+
+        PurgeDeadLetteredSql = $"""
+            DELETE TOP (@BatchSize) FROM {QualifiedTableName}
+            WHERE DeadLetteredAtUtc IS NOT NULL
+              AND DeadLetteredAtUtc < @CutoffUtc;
             """;
     }
 
@@ -142,6 +210,23 @@ internal sealed class SqlServerOutboxSql
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Table names are also used to derive constraint and index names, which SQL Server limits to 128
+    /// characters, so they get a tighter bound than a bare identifier.
+    /// </summary>
+    internal static bool IsValidTableName(string? tableName)
+        => IsValidIdentifier(tableName) && tableName!.Length <= MaxTableNameLength;
+
+    private static void ValidateTableName(string tableName)
+    {
+        if (!IsValidTableName(tableName))
+        {
+            throw new ArgumentException(
+                $"'{tableName}' is not a valid SQL Server table name. Use letters, digits, and underscores only, with at most {MaxTableNameLength} characters.",
+                nameof(tableName));
+        }
     }
 
     private static void ValidateIdentifier(string identifier, string paramName)
